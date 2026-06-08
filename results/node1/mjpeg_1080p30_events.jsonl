@@ -1,0 +1,12 @@
+{"event": "receiver_started", "pipeline": "udpsrc port=5000 buffer-size=16777216 caps=\"application/x-rtp,media=video,clock-rate=90000,encoding-name=JPEG,payload=26\" ! rtpjitterbuffer latency=80 drop-on-latency=true ! queue leaky=downstream max-size-buffers=4 ! rtpjpegdepay ! jpegdec ! videoconvert ! video/x-raw,format=BGR ! appsink drop=true sync=false max-buffers=1", "port": 5000, "profile": "mjpeg_1080p30", "ts": 1780844200.9258103}
+{"event": "receiver_fps", "fps": 14.964162109282555, "frame_shape": [1080, 1920, 3], "frames_total": 30, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844202.930599}
+{"event": "receiver_fps", "fps": 14.545962348779543, "frame_shape": [1080, 1920, 3], "frames_total": 60, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844204.993027}
+{"event": "receiver_fps", "fps": 14.99712499235861, "frame_shape": [1080, 1920, 3], "frames_total": 91, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844207.0600898}
+{"event": "receiver_fps", "fps": 14.479006272162401, "frame_shape": [1080, 1920, 3], "frames_total": 120, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844209.0629897}
+{"event": "receiver_fps", "fps": 14.01369262021597, "frame_shape": [1080, 1920, 3], "frames_total": 149, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844211.1323943}
+{"event": "receiver_fps", "fps": 15.066382573606877, "frame_shape": [1080, 1920, 3], "frames_total": 180, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844213.1899552}
+{"event": "receiver_fps", "fps": 15.07022432971605, "frame_shape": [1080, 1920, 3], "frames_total": 211, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844215.2469916}
+{"event": "receiver_fps", "fps": 14.450270074988028, "frame_shape": [1080, 1920, 3], "frames_total": 240, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844217.2538745}
+{"event": "receiver_fps", "fps": 14.51582470141583, "frame_shape": [1080, 1920, 3], "frames_total": 270, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844219.3205845}
+{"event": "receiver_fps", "fps": 14.459037420238023, "frame_shape": [1080, 1920, 3], "frames_total": 299, "infer_ms": null, "profile": "mjpeg_1080p30", "ts": 1780844221.3262506}
+{"event": "receiver_stopped", "frames_total": 314, "profile": "mjpeg_1080p30", "runtime_sec": 21.473336696624756, "ts": 1780844222.3991444}

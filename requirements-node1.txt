@@ -1,0 +1,8 @@
+# Node1 receiver/orchestrator Python dependencies.
+# IMPORTANT:
+# - OpenCV should come from apt python3-opencv so cv2 keeps GStreamer support.
+# - Do NOT install opencv-python from pip for this project unless you accept losing GStreamer support.
+numpy>=1.23,<2.0
+onnxruntime>=1.17
+PyYAML>=6.0
+prometheus-client>=0.20

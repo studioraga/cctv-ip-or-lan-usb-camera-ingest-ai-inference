@@ -1,0 +1,21 @@
+version: 1
+name: local_lan_camera_policy
+rules:
+  - id: allow_node2_camera_to_node1_udp5000
+    description: Node2 may send MJPEG RTP camera frames to Node1 on UDP/5000 only.
+    source_ip: 192.168.29.188
+    destination_ip: 192.168.29.20
+    protocol: udp
+    destination_port: 5000
+    action: allow
+  - id: deny_untrusted_camera_sources
+    description: Drop camera RTP traffic from unknown LAN sources.
+    source_ip: "*"
+    destination_ip: 192.168.29.20
+    protocol: udp
+    destination_port: 5000
+    action: deny
+observability:
+  require_metrics: true
+  require_jsonl_event_log: true
+  require_tegrastats_on_node2: true

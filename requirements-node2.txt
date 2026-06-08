@@ -1,0 +1,4 @@
+# Node2 Jetson streamer/controller Python dependencies.
+# Keep this small: streaming is done by GStreamer shell commands launched from Python.
+PyYAML>=6.0
+prometheus-client>=0.20
