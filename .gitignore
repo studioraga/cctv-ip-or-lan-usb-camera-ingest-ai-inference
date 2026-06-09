@@ -1,0 +1,55 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime outputs
+results/**/*.jsonl
+results/**/*.log
+results/**/*.txt
+*.log
+
+# Camera/event generated artifacts
+data/events/*.db
+data/events/*.sqlite
+data/events/*.sqlite3
+data/keyframes/*.jpg
+data/keyframes/*.jpeg
+data/keyframes/*.png
+data/clips/**/*.mp4
+data/clips/**/*.mkv
+data/clips/**/*.avi
+
+# Large model/media artifacts
+*.onnx
+*.engine
+*.plan
+*.mp4
+*.mkv
+*.mjpg
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+cpp/**/build/
+
+# Editor/OS
+.DS_Store
+.vscode/
+.idea/
+
+# Local backup files
+*.bak
+*.backup
+*.before_*
+*_patched.py
+*_patched_v2.py
