@@ -1,0 +1,15 @@
+[Unit]
+Description=Node2 AI Camera Control Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/srrmk/dev/ai-system/ai-camera-node1-node2-agent-framework
+ExecStart=/home/srrmk/dev/ai-system/ai-camera-node1-node2-agent-framework/.venv/bin/uvicorn services.node2_control_agent.app:app --host 192.168.29.188 --port 8082
+Restart=on-failure
+RestartSec=3
+User=srrmk
+
+[Install]
+WantedBy=multi-user.target

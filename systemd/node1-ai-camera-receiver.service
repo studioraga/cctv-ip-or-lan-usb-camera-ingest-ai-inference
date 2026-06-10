@@ -1,0 +1,15 @@
+[Unit]
+Description=Node1 AI Camera RTP Receiver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rmk/dev/ai-camera-node1-node2-agent-framework
+ExecStart=/home/rmk/dev/ai-camera-node1-node2-agent-framework/.venv/bin/python agents/node1/node1_receiver_agent.py --profile mjpeg_720p30 --port 5000 --camera-id c922_node2_gate --db-path data/events/ai_camera.db --metrics --metrics-port 9101 --motion-events --event-log results/node1/events.jsonl
+Restart=on-failure
+RestartSec=3
+User=rmk
+
+[Install]
+WantedBy=multi-user.target
