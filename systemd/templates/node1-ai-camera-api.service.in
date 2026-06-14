@@ -1,0 +1,26 @@
+[Unit]
+Description=Node1 AI Camera API Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@REPO_ROOT@
+EnvironmentFile=@ENV_FILE@
+ExecStartPre=@PYTHON@ scripts/common/render_runtime_config.py --role node1 --repo-root @REPO_ROOT@
+ExecStartPre=@PYTHON@ scripts/common/validate_policy.py --policy @POLICY@
+ExecStartPre=@PYTHON@ scripts/common/apply_migrations.py --db-path @DB_PATH@ --migrations-dir @MIGRATIONS@
+ExecStart=@UVICORN@ services.node1_api_gateway.app:app --host @NODE1_IP@ --port @NODE1_API_PORT@ --no-proxy-headers
+Restart=on-failure
+RestartSec=3
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@DATA_DIR@ @RESULTS_DIR@ @RUNTIME_CONFIG_DIR@
+
+[Install]
+WantedBy=multi-user.target

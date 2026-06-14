@@ -1,17 +1,4 @@
-[Unit]
-Description=Node1 AI Camera API Gateway
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=/home/rmk/dev/ai-camera-node1-node2-agent-framework
-Environment=AI_CAMERA_DB=data/events/ai_camera.db
-Environment=NODE2_URL=http://192.168.29.188:8082
-ExecStart=/home/rmk/dev/ai-camera-node1-node2-agent-framework/.venv/bin/uvicorn services.node1_api_gateway.app:app --host 192.168.29.20 --port 8080
-Restart=on-failure
-RestartSec=3
-User=rmk
-
-[Install]
-WantedBy=multi-user.target
+# Generated unit placeholder.
+# Do not copy this file directly.
+# Install with: scripts/common/prepare_deployment.sh <node1|node2>
+# Template: systemd/templates/node1-ai-camera-api.service.in

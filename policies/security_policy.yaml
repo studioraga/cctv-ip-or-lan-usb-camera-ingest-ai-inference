@@ -1,21 +1,16 @@
-version: 1
-name: local_lan_camera_policy
-rules:
-  - id: allow_node2_camera_to_node1_udp5000
-    description: Node2 may send MJPEG RTP camera frames to Node1 on UDP/5000 only.
-    source_ip: 192.168.29.188
-    destination_ip: 192.168.29.20
-    protocol: udp
-    destination_port: 5000
-    action: allow
-  - id: deny_untrusted_camera_sources
-    description: Drop camera RTP traffic from unknown LAN sources.
-    source_ip: "*"
-    destination_ip: 192.168.29.20
-    protocol: udp
-    destination_port: 5000
-    action: deny
-observability:
-  require_metrics: true
-  require_jsonl_event_log: true
-  require_tegrastats_on_node2: true
+# Example only. Runtime policy is generated at configs/runtime/security_policy.yaml
+# by scripts/common/render_runtime_config.py using deploy/ai-camera.env.
+version: 2
+name: example_local_lan_camera_policy
+cameras:
+  - camera_id: c922_node2_gate
+    source_ip: 10.0.0.22
+    node2_url: http://10.0.0.22:8082
+    allowed_node1_ips: [10.0.0.21]
+    allowed_ports: [5000]
+    allowed_profiles: [mjpeg_480p30, mjpeg_720p30, mjpeg_720p60]
+    allowed_devices: [/dev/video0]
+media: {clip_root: data/clips, keyframe_root: data/keyframes}
+node2_control: {trusted_client_ips: [10.0.0.21, 127.0.0.1, '::1']}
+network_rules: []
+observability: {require_metrics: true, require_jsonl_event_log: true, require_tegrastats_on_node2: true}

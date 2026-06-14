@@ -1,12 +1,10 @@
+# Render with scripts/common/render_prometheus_config.sh before use.
 global:
   scrape_interval: 5s
 scrape_configs:
   - job_name: node1_api
-    static_configs:
-      - targets: ['192.168.29.20:8080']
+    static_configs: [{targets: ['${AI_CAMERA_NODE1_IP}:${AI_CAMERA_NODE1_API_PORT}']}]
   - job_name: node1_receiver
-    static_configs:
-      - targets: ['192.168.29.20:9101']
+    static_configs: [{targets: ['${AI_CAMERA_NODE1_IP}:${AI_CAMERA_NODE1_METRICS_PORT}']}]
   - job_name: node2_control
-    static_configs:
-      - targets: ['192.168.29.188:8082']
+    static_configs: [{targets: ['${AI_CAMERA_NODE2_IP}:${AI_CAMERA_NODE2_API_PORT}']}]

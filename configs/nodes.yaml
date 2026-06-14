@@ -1,36 +1,3 @@
-node1:
-  role: receiver_ai_orchestrator
-  ip: 192.168.29.20
-  udp_port: 5000
-  expected_payload: 26
-  expected_encoding: JPEG
-  receive_mode: gstreamer_opencv
-
-node2:
-  role: camera_streamer
-  ip: 192.168.29.188
-  camera_device: /dev/video0
-  camera_model: Logitech C922 Pro Stream Webcam
-  default_mode: mjpeg_720p30
-  supported_modes:
-    mjpeg_480p30:
-      width: 640
-      height: 480
-      fps: 30
-    mjpeg_720p30:
-      width: 1280
-      height: 720
-      fps: 30
-    mjpeg_720p60:
-      width: 1280
-      height: 720
-      fps: 60
-    mjpeg_1080p30:
-      width: 1920
-      height: 1080
-      fps: 30
-
-network:
-  transport: UDP/RTP
-  rtp_caps: application/x-rtp,media=video,clock-rate=90000,encoding-name=JPEG,payload=26
-  low_latency: true
+# Example only. Generated runtime file: configs/runtime/nodes.yaml
+node1: {ip: 10.0.0.21, udp_port: 5000}
+node2: {ip: 10.0.0.22, camera_device: /dev/video0}

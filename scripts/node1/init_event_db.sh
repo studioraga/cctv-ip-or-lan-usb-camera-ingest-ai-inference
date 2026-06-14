@@ -2,5 +2,6 @@
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
-source .venv/bin/activate
-python -m services.node1_event_indexer.indexer --db-path "${AI_CAMERA_DB:-data/events/ai_camera.db}"
+exec .venv/bin/python scripts/common/apply_migrations.py \
+  --db-path "${AI_CAMERA_DB:-data/events/ai_camera.db}" \
+  --migrations-dir "${AI_CAMERA_MIGRATIONS:-migrations}"

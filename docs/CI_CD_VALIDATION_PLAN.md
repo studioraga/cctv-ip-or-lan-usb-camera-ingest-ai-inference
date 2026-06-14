@@ -1,14 +1,8 @@
 # CI/CD Validation Plan
 
-This project has both normal software checks and hardware-in-the-loop checks. Standard GitHub-hosted CI can validate syntax and non-hardware logic. Camera streaming tests require Node1/Node2 hardware or self-hosted runners.
+This project has both normal software checks and hardware-in-the-loop checks. Hosted CI can validate syntax, imports, policy, migrations, and GStreamer command construction. Full stream validation requires Node1/Node2 hardware or self-hosted LAN runners.
 
----
-
-## 1. CI layers
-
-### Layer 1 — Static validation, no hardware
-
-Run on every commit:
+## Layer 1 — static validation, no hardware
 
 ```bash
 ./scripts/ci/validate_static.sh
@@ -17,115 +11,87 @@ Run on every commit:
 Checks:
 
 - Python compile checks for agents and services.
-- YAML syntax for configs/policies.
+- YAML syntax for configs and policies.
 - Shell script syntax.
 - Node2 GStreamer command generation for every profile.
 - Query parser smoke test.
 
-### Layer 2 — Node1 local runtime smoke
+## Layer 2 — Node1 local runtime smoke
 
-Run on Node1 or a compatible local machine:
+Run on Node1 or a compatible x86 machine with apt OpenCV/GStreamer:
 
 ```bash
+source .venv/bin/activate
 ./scripts/ci/validate_node1_runtime.sh
 ```
 
 Checks:
 
-- OpenCV import.
-- OpenCV GStreamer build visibility.
-- ONNX Runtime import.
-- SQLite schema initialization.
-- Event DB smoke insert/list.
+- Python interpreter path.
+- `cv2` import.
+- `GStreamer: YES` in OpenCV build info. This is mandatory.
+- ONNX Runtime import if installed.
+- `httpx` and `httpx2` import.
+- SQLite/EventDB smoke operation.
 - Node1 API module import.
 
-### Layer 3 — Node2 local runtime smoke
+## Layer 3 — Node2 local runtime smoke
 
 Run on Node2 Jetson:
 
 ```bash
+source .venv/bin/activate
 ./scripts/ci/validate_node2_runtime.sh
 ```
 
 Checks:
 
-- Node2 controller imports.
+- Node2 dependency imports including `httpx` and `httpx2`.
+- `agents.node2.node2_streamer_controller` import.
 - Generated GStreamer commands for all profiles.
-- YUYV profile includes `videoconvert` and `UYVY` before `rtpvrawpay`.
-- FastAPI control app imports.
+- MJPEG profiles include `rtpjpegpay`.
+- YUYV raw profile includes `videoconvert`, `UYVY`, and `rtpvrawpay`.
+- Node2 FastAPI control app import.
+- Optional V4L2 camera probe.
 
-### Layer 4 — Hardware-in-the-loop LAN validation
+## Layer 4 — deployment preparation
 
-Run manually or with self-hosted runners:
-
-1. Start Node2 control agent.
-2. Start Node1 receiver.
-3. Start stream through REST.
-4. Confirm receiver FPS/frame output.
-5. Stop stream.
-6. Confirm receiver exits after no-frame timeout.
-7. Confirm motion events create DB rows, keyframes, and clips.
-
----
-
-## 2. Future GitHub Actions skeleton
-
-A future `.github/workflows/ci.yml` can run Layer 1 checks:
-
-```yaml
-name: ci
-on: [push, pull_request]
-
-jobs:
-  static:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install minimal deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install PyYAML pydantic fastapi prometheus-client httpx qdrant-client
-      - name: Static validation
-        run: ./scripts/ci/validate_static.sh
-```
-
-Hardware tests should not run on public GitHub-hosted runners unless camera/network dependencies are mocked. Use self-hosted runners on Node1/Node2 if full LAN validation is required.
-
----
-
-## 3. Suggested pre-push checklist
+Run per node:
 
 ```bash
-./scripts/ci/validate_static.sh
-./scripts/ci/validate_node1_runtime.sh   # Node1 only
-./scripts/ci/validate_node2_runtime.sh   # Node2 only
+set -a; source deploy/ai-camera.env; set +a
+export AI_CAMERA_REPO_ROOT="$PWD"
+./scripts/common/prepare_deployment.sh node1
+./scripts/common/prepare_deployment.sh node2
 ```
 
-Manual hardware test:
+Expected: rendered runtime configs, policy validation, and pytest success.
+
+## Layer 5 — hardware-in-the-loop Step 9 streaming validation
+
+Run from Node1 after both systemd services are installed and active:
 
 ```bash
-# Node2
-./scripts/node2/run_node2_control_agent.sh
-
-# Node1
-python agents/node1/node1_receiver_agent.py \
-  --profile mjpeg_720p30 \
-  --port 5000 \
-  --camera-id c922_node2_gate \
-  --db-path data/events/ai_camera.db \
-  --metrics --metrics-port 9101 \
-  --motion-events \
-  --no-frame-timeout-sec 10 \
-  --startup-timeout-sec 30 \
-  --event-log results/node1/events.jsonl
-
-# Node1 or any LAN terminal
-curl -X POST http://192.168.29.188:8082/stream/start \
-  -H 'Content-Type: application/json' \
-  -d '{"node1_ip":"192.168.29.20","port":5000,"profile":"mjpeg_720p30","device":"/dev/video0"}'
-
-curl -X POST http://192.168.29.188:8082/stream/stop
+./scripts/validate_step9_streaming.sh
 ```
+
+Checks:
+
+1. Node1 `/health`.
+2. Node2 `/health`.
+3. Node2 `/stream/start` from trusted Node1.
+4. Node2 `/stream/status` remains `running: true`.
+5. Node1 receiver metrics show FPS and increasing `ai_camera_frames_total`.
+6. Node2 `/stream/stop` returns `running: false`.
+
+The script writes a timestamped log under `results/step9/`.
+
+## Known failure signatures that CI should catch or document
+
+| Failure | Meaning | Fix |
+|---|---|---|
+| `GStreamer: NO` in Node1 `.venv` | PyPI/OpenCV wheel shadowed apt OpenCV | Recreate venv with `--system-site-packages`; do not install `opencv-python` |
+| `ModuleNotFoundError: services` in receiver | Receiver launched as direct script | Launch with `python -m agents.node1.node1_receiver_agent` |
+| `/stream/status` returns `403` from Node2 itself | Caller not in Node2 trusted control list | Query status from Node1 or add explicit policy entry if desired |
+| `Device '/dev/video0' is busy` | Manual sender or stale gst process owns camera | Stop previous sender before API start |
+| `streamer exited rc=1` | GStreamer command failed after API start | Check Node2 journal and camera ownership |

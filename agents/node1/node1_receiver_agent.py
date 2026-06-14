@@ -33,6 +33,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+from services.common.event_db import EventDB
 from typing import Any, Dict, Optional
 
 import cv2
@@ -173,106 +174,24 @@ def write_jsonl(event_log: Optional[str], event: Dict[str, Any]) -> None:
 
 
 class EventStore:
-    """Small SQLite event store used by the receiver and API gateway."""
+    """Receiver adapter over the shared, migration-managed EventDB."""
 
     def __init__(self, db_path: Optional[str]):
         self.db_path = db_path
-        self.conn: Optional[sqlite3.Connection] = None
-        if db_path:
-            ensure_parent(db_path)
-            self.conn = sqlite3.connect(db_path, check_same_thread=False)
-            self.conn.row_factory = sqlite3.Row
-            self.init_schema()
-
-    def init_schema(self) -> None:
-        assert self.conn is not None
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS cameras (
-                camera_id TEXT PRIMARY KEY,
-                name TEXT,
-                type TEXT,
-                source TEXT,
-                location TEXT,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS clips (
-                clip_id TEXT PRIMARY KEY,
-                camera_id TEXT NOT NULL,
-                start_ts TEXT NOT NULL,
-                end_ts TEXT NOT NULL,
-                path TEXT NOT NULL,
-                keyframe_path TEXT,
-                duration_sec REAL,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS events (
-                event_id TEXT PRIMARY KEY,
-                camera_id TEXT NOT NULL,
-                clip_id TEXT,
-                ts TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                severity TEXT NOT NULL,
-                label TEXT,
-                confidence REAL,
-                track_id TEXT,
-                zone_id TEXT,
-                bbox_json TEXT,
-                attrs_json TEXT,
-                caption TEXT,
-                embedding_id TEXT,
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_events_camera_ts ON events(camera_id, ts);
-            CREATE INDEX IF NOT EXISTS idx_events_type_ts ON events(event_type, ts);
-            CREATE INDEX IF NOT EXISTS idx_events_zone_ts ON events(zone_id, ts);
-            """
-        )
-        self.conn.commit()
+        self.db: Optional[EventDB] = EventDB(db_path) if db_path else None
 
     def insert_event(self, event: Dict[str, Any]) -> None:
-        if self.conn is None:
-            return
-        self.conn.execute(
-            """
-            INSERT OR REPLACE INTO events (
-                event_id, camera_id, clip_id, ts, event_type, severity, label,
-                confidence, track_id, zone_id, bbox_json, attrs_json, caption,
-                embedding_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event["event_id"], event["camera_id"], event.get("clip_id"), event["ts"],
-                event["event_type"], event.get("severity", "info"), event.get("label"),
-                event.get("confidence"), event.get("track_id"), event.get("zone_id"),
-                json.dumps(event.get("bbox")) if event.get("bbox") is not None else None,
-                json.dumps(event.get("attrs", {})), event.get("caption"),
-                event.get("embedding_id"), now_iso(),
-            ),
-        )
-        self.conn.commit()
+        if self.db is not None:
+            self.db.insert_event(event)
 
     def insert_clip(self, clip: Dict[str, Any]) -> None:
-        if self.conn is None:
-            return
-        self.conn.execute(
-            """
-            INSERT OR REPLACE INTO clips (
-                clip_id, camera_id, start_ts, end_ts, path, keyframe_path, duration_sec, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                clip["clip_id"], clip["camera_id"], clip["start_ts"], clip["end_ts"],
-                clip["path"], clip.get("keyframe_path"), clip.get("duration_sec"), now_iso(),
-            ),
-        )
-        self.conn.commit()
+        if self.db is not None:
+            self.db.insert_clip(clip)
 
     def close(self) -> None:
-        if self.conn is not None:
-            self.conn.close()
-            self.conn = None
+        if self.db is not None:
+            self.db.close()
+            self.db = None
 
 
 class Metrics:

@@ -1,0 +1,41 @@
+version: 2
+name: generated_local_lan_camera_policy
+cameras:
+- camera_id: c922_node2_gate
+  source_ip: 192.168.29.188
+  node2_url: http://192.168.29.188:8082
+  allowed_node1_ips:
+  - 192.168.29.20
+  allowed_ports:
+  - 5000
+  allowed_profiles:
+  - mjpeg_480p30
+  - mjpeg_720p30
+  - mjpeg_720p60
+  allowed_devices:
+  - /dev/video0
+media:
+  clip_root: data/clips
+  keyframe_root: data/keyframes
+node2_control:
+  trusted_client_ips:
+  - 192.168.29.20
+  - 127.0.0.1
+  - ::1
+network_rules:
+- id: allow_node2_camera_to_node1
+  source_ip: 192.168.29.188
+  destination_ip: 192.168.29.20
+  protocol: udp
+  destination_port: 5000
+  action: allow
+- id: deny_untrusted_camera_sources
+  source_ip: '*'
+  destination_ip: 192.168.29.20
+  protocol: udp
+  destination_port: 5000
+  action: deny
+observability:
+  require_metrics: true
+  require_jsonl_event_log: true
+  require_tegrastats_on_node2: true

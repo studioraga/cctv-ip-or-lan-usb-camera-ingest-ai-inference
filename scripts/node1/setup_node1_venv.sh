@@ -6,19 +6,18 @@ cd "$REPO_ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_DIR="${VENV_DIR:-.venv}"
+RECREATE_VENV="${RECREATE_VENV:-0}"
 
-#sudo apt update
-#sudo apt install -y \
-#  python3 \
-#  python3-venv \
-#  python3-pip \
-#  python3-opencv \
-#  gstreamer1.0-tools \
-#  gstreamer1.0-plugins-base \
-#  gstreamer1.0-plugins-good \
-#  gstreamer1.0-plugins-bad \
-#  gstreamer1.0-plugins-ugly \
-#  gstreamer1.0-libav
+cat <<'NOTE'
+[Node1 venv rule]
+Node1 receiver uses OpenCV VideoCapture with GStreamer pipelines.
+Therefore Node1 .venv MUST be created with --system-site-packages so it can see apt python3-opencv.
+Do not install opencv-python/opencv-contrib-python in this venv.
+NOTE
+
+if [ "$RECREATE_VENV" = "1" ] && [ -d "$VENV_DIR" ]; then
+  mv "$VENV_DIR" "${VENV_DIR}.backup-$(date +%Y%m%d-%H%M%S)"
+fi
 
 if [ ! -d "$VENV_DIR" ]; then
   "$PYTHON_BIN" -m venv --system-site-packages "$VENV_DIR"
@@ -35,18 +34,24 @@ print("Python:", sys.executable)
 try:
     import cv2
     print("cv2 version:", cv2.__version__)
-    info = cv2.getBuildInformation()
-    for line in info.splitlines():
-        if "GStreamer" in line:
-            print(line)
+    line = next((x for x in cv2.getBuildInformation().splitlines() if "GStreamer" in x), None)
+    print(line or "GStreamer line not found")
+    if line is None or "YES" not in line:
+        raise SystemExit("[FAIL] Node1 OpenCV must report GStreamer: YES. Recreate venv with --system-site-packages and ensure apt python3-opencv is installed.")
 except Exception as exc:
-    print("cv2 import/check failed:", exc)
+    raise SystemExit(f"[FAIL] cv2/GStreamer validation failed: {exc}")
 try:
     import onnxruntime as ort
     print("onnxruntime:", ort.__version__)
     print("providers:", ort.get_available_providers())
 except Exception as exc:
     print("onnxruntime check failed:", exc)
+try:
+    import httpx, httpx2
+    print("httpx:", httpx.__version__)
+    print("httpx2: OK")
+except Exception as exc:
+    raise SystemExit(f"[FAIL] HTTP client dependency check failed: {exc}")
 PY
 
 echo "Node1 .venv ready at: $REPO_ROOT/$VENV_DIR"

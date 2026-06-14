@@ -1,8 +1,15 @@
-# Node1 receiver/orchestrator Python dependencies.
-# IMPORTANT:
-# - OpenCV should come from apt python3-opencv so cv2 keeps GStreamer support.
-# - Do NOT install opencv-python from pip for this project unless you accept losing GStreamer support.
+# Node1 receiver, API gateway, policy and migration dependencies.
+# OpenCV must come from apt python3-opencv so cv2 retains GStreamer support.
+# Do not install opencv-python into this environment.
 numpy>=1.23,<2.0
-onnxruntime>=1.17
-PyYAML>=6.0
-prometheus-client>=0.20
+onnxruntime>=1.17,<2.0
+PyYAML>=6.0,<7.0
+prometheus-client>=0.20,<1.0
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+httpx>=0.27,<1.0
+pydantic>=2.6,<3.0
+
+# Test-only requirements are also safe in the Node1 development venv.
+pytest>=8.0,<9.0
+httpx2>=2.4,<3.0

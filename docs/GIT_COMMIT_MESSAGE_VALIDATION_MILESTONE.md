@@ -1,29 +1,63 @@
-# Suggested Git commit message
+# Suggested Git commit message for Step 8/9 validation milestone
 
 ```text
-Validate Node1/Node2 AI camera service-layer baseline
+Stabilize Node1/Node2 CCTV streaming deployment
 
-- Document validated Node1/Node2 LAN camera pipeline in README
-- Add detailed VALIDATION.md with incremental bring-up, issues, fixes, and proof points
-- Validate Logitech C922 USB/V4L2 camera streaming from Node2 Jetson to Node1 receiver
-- Validate MJPEG RTP profiles for 480p30, 720p30, 720p60, and 1080p30
-- Validate YUYV 640x480 raw RTP debug profile with YUY2-to-UYVY conversion
-- Validate Node2 FastAPI control agent start/stop/switch-profile flow
-- Validate Node1 FastAPI API gateway health, camera inventory, Node2 status, and control path
-- Validate Prometheus metrics endpoints for Node1 receiver and Node2 control agent
-- Validate SQLite event schema with cameras, clips, and events tables
-- Validate motion-triggered event persistence with linked keyframes and MP4 clips
-- Add threaded Node1 receiver capture loop to avoid OpenCV cap.read() hangs after stream stop
-- Add startup/no-frame watchdog controls for robust headless receiver operation
-- Add CI/CD validation plan and initial static/node-local validation scripts
-
-Validated on local LAN:
-- Node1 receiver/API gateway: 192.168.29.20
-- Node2 Jetson C922 streamer/control agent: 192.168.29.188
+- Preserve Node1 OpenCV/GStreamer runtime by requiring venv creation with --system-site-packages
+- Add validation failure when Node1 cv2 does not report GStreamer: YES
+- Add Node2 package marker for streamer controller imports
+- Add missing httpx/httpx2 dependencies for Node1 and Node2 runtime tests
+- Improve Node1 and Node2 venv setup scripts with explicit dependency checks
+- Strengthen Node1/Node2 runtime CI validation scripts
+- Add repeatable Step 9 API-controlled streaming validation script
+- Update portable deployment, architecture, venv, CI/CD, and validation docs
+- Document root causes for GStreamer pipeline open failure, device busy, and policy 403 cases
+- Validate Node2 API-controlled RTP/JPEG streaming into Node1 receiver
+- Confirm receiver metrics, motion events, clip/keyframe metadata, and SQLite evidence
 ```
 
-Optional shorter subject:
+Short subject option:
 
 ```text
-Validate local-first Node1/Node2 AI camera baseline
+Stabilize API-controlled Node1/Node2 camera streaming
+```
+
+## Validation evidence summary
+
+```text
+Node1 API service                 PASS
+Node1 receiver service            PASS
+Node1 OpenCV GStreamer            PASS
+Node2 control service             PASS
+Node2 /stream/start               PASS
+Node2 /stream/status from Node1   PASS
+Node1 receiver FPS                PASS (~15 FPS)
+Node1 frames_total                PASS (increasing)
+Node1 JSONL evidence              PASS
+Node1 SQLite motion events        PASS
+Node2 /stream/stop                PASS
+Node2 camera process cleanup      PASS
+```
+
+## Files expected in this commit
+
+```text
+README.md
+docs/ARCHITECTURE.md
+docs/CI_CD_VALIDATION_PLAN.md
+docs/GIT_COMMIT_MESSAGE_VALIDATION_MILESTONE.md
+docs/NODE1_STEP7_VALIDATION_STATUS.md
+docs/PORTABLE_DEPLOYMENT.md
+docs/STEP1_MIGRATIONS_POLICY_MEDIA_SECURITY.md
+docs/TASK1_IMPLEMENTATION_NOTES.md
+docs/VENV_SETUP.md
+requirements-node1.txt
+requirements-node2.txt
+agents/node2/__init__.py
+scripts/node1/setup_node1_venv.sh
+scripts/node2/setup_node2_venv.sh
+scripts/ci/validate_node1_runtime.sh
+scripts/ci/validate_node2_runtime.sh
+scripts/common/sync_repo_to_node2.sh
+scripts/validate_step9_streaming.sh
 ```

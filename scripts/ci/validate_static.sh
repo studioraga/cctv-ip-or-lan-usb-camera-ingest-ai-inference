@@ -23,6 +23,7 @@ python3 -m py_compile \
 
 echo "[CI] YAML syntax checks"
 python3 - <<'PY'
+import os
 from pathlib import Path
 import yaml
 for path in list(Path('configs').glob('*.yaml')) + list(Path('policies').glob('*.yaml')):
@@ -39,10 +40,11 @@ done
 
 echo "[CI] Node2 command generation checks"
 python3 - <<'PY'
+import os
 from agents.node2.node2_streamer_controller import build_gstreamer_command
 profiles = ['mjpeg_480p30','mjpeg_720p30','mjpeg_720p60','mjpeg_1080p30','yuyv_640x480']
 for p in profiles:
-    cmd = build_gstreamer_command(p, '192.168.29.20', 5000, '/dev/video0')
+    cmd = build_gstreamer_command(p, os.getenv('AI_CAMERA_TEST_NODE1_IP', '192.0.2.21'), 5000, '/dev/video0')
     line = ' '.join(cmd)
     assert 'gst-launch-1.0' in line
     assert 'udpsink' in line
