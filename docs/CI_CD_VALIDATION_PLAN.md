@@ -95,3 +95,15 @@ The script writes a timestamped log under `results/step9/`.
 | `/stream/status` returns `403` from Node2 itself | Caller not in Node2 trusted control list | Query status from Node1 or add explicit policy entry if desired |
 | `Device '/dev/video0' is busy` | Manual sender or stale gst process owns camera | Stop previous sender before API start |
 | `streamer exited rc=1` | GStreamer command failed after API start | Check Node2 journal and camera ownership |
+
+## Layer 6 — Step 10 reproducibility gate
+
+```bash
+SOURCE_HYGIENE=1 ./scripts/validate_step10_reproducible_deployment.sh all
+RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node1
+RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node2
+RUN_STREAM=1 ./scripts/validate_step10_reproducible_deployment.sh node1
+```
+
+This gate combines source hygiene, static checks, runtime checks, deployment preparation, service health, and optional API-controlled streaming validation.
+

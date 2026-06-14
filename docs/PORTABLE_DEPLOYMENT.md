@@ -154,3 +154,21 @@ sudo ufw allow from "$AI_CAMERA_NODE2_IP" to "$AI_CAMERA_NODE1_IP" port "$AI_CAM
 sudo ufw allow from "$AI_CAMERA_NODE1_IP" to "$AI_CAMERA_NODE2_IP" port "$AI_CAMERA_NODE2_API_PORT" proto tcp
 sudo ufw allow from "$AI_CAMERA_NODE1_IP" to "$AI_CAMERA_NODE1_IP" port "$AI_CAMERA_NODE1_METRICS_PORT" proto tcp
 ```
+
+## Step 10.2 reproducible validation
+
+After installing both nodes, run the reproducibility validator:
+
+```bash
+# Node1
+RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node1
+
+# Node2
+RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node2
+
+# Node1 full stream check
+RUN_STREAM=1 ./scripts/validate_step10_reproducible_deployment.sh node1
+```
+
+The script writes timestamped logs under `results/step10/`.
+

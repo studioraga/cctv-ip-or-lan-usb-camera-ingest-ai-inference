@@ -61,3 +61,22 @@ scripts/ci/validate_node2_runtime.sh
 scripts/common/sync_repo_to_node2.sh
 scripts/validate_step9_streaming.sh
 ```
+
+## Step 10.2 commit message
+
+```text
+Harden reproducible Node1/Node2 CCTV deployment validation
+
+- Add Step 10 reproducible deployment validation script
+- Preserve source hygiene checks for clean archives and syncs
+- Keep Node1 OpenCV/GStreamer validation as a mandatory runtime gate
+- Validate Node1 and Node2 deployment preparation from generated runtime config
+- Add service health checks for Node1 API, Node1 receiver, and Node2 control agent
+- Keep API-controlled Step 9 streaming as an optional Node1-launched hardware gate
+- Document operational hardening, failure signatures, and pass criteria
+```
+
+
+- `docs/STEP10_OPERATIONAL_HARDENING.md`
+
+- `scripts/validate_step10_reproducible_deployment.sh`
