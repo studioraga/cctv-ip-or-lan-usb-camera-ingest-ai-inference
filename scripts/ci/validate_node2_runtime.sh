@@ -4,15 +4,30 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+export PYTHONNOUSERSITE=1
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   PYTHON_BIN=python3
 fi
 
 echo "[CI:NODE2] Dependency imports"
 "$PYTHON_BIN" - <<'PY'
+import site
+import sys
+print('python', sys.executable)
+print('ENABLE_USER_SITE', site.ENABLE_USER_SITE)
+if site.ENABLE_USER_SITE:
+    raise SystemExit('Node2 runtime must disable user-site packages with PYTHONNOUSERSITE=1')
+if any('/.local/' in p for p in sys.path):
+    raise SystemExit('Node2 runtime sys.path includes ~/.local user-site packages')
 for name in ('yaml', 'fastapi', 'uvicorn', 'pydantic', 'prometheus_client', 'httpx', 'httpx2'):
     __import__(name)
     print(name, 'OK')
+import anyio
+import anyio._core._tasks as anyio_tasks
+import anyio._backends._asyncio  # noqa: F401
+print('anyio', anyio.__file__)
+if not hasattr(anyio_tasks, 'TaskHandle'):
+    raise SystemExit('Broken AnyIO install: missing TaskHandle')
 PY
 
 echo "[CI:NODE2] Controller import and profile commands"

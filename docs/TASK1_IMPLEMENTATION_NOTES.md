@@ -23,7 +23,7 @@ The latest validation added these important operational fixes:
 - `agents/node2/__init__.py` is required so `agents.node2.node2_streamer_controller` imports correctly on Node2 and in CI.
 - `requirements-node1.txt` and `requirements-node2.txt` include both `httpx` and `httpx2` because service tests import Node1/Node2 FastAPI apps using current Starlette/FastAPI test dependencies.
 - Node1 `.venv` must be created with `--system-site-packages` and must report OpenCV `GStreamer: YES`.
-- Node2 `.venv` is also created with `--system-site-packages` on Jetson to keep system camera/media packages visible.
+- Node2 `.venv` is intentionally isolated without `--system-site-packages`. The Jetson camera path uses GStreamer/V4L2 command-line tools, while the FastAPI control API must avoid mixing `~/.local`, apt Python packages, and venv packages. Runtime uses `PYTHONNOUSERSITE=1`.
 - `scripts/validate_step9_streaming.sh` captures the validated Node1-to-Node2 control path and Node2-to-Node1 RTP data path.
 
 ## Validated end-to-end flow

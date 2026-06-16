@@ -9,6 +9,7 @@ User=@SERVICE_USER@
 Group=@SERVICE_GROUP@
 WorkingDirectory=@REPO_ROOT@
 EnvironmentFile=@ENV_FILE@
+Environment=PYTHONNOUSERSITE=1
 ExecStartPre=@PYTHON@ scripts/common/render_runtime_config.py --role node2 --repo-root @REPO_ROOT@
 ExecStartPre=@PYTHON@ scripts/common/validate_policy.py --policy @POLICY@
 ExecStart=@UVICORN@ services.node2_control_agent.app:app --host @NODE2_IP@ --port @NODE2_API_PORT@ --no-proxy-headers

@@ -92,7 +92,7 @@ Install dependencies and create Node2 venv:
 
 ```bash
 scripts/node2/install_node2_dependencies.sh
-RECREATE_VENV=1 scripts/node2/setup_node2_venv.sh
+PYTHONNOUSERSITE=1 RECREATE_VENV=1 scripts/node2/setup_node2_venv.sh
 source .venv/bin/activate
 ```
 
