@@ -32,7 +32,7 @@ def main() -> int:
       'NODE1_IP':os.environ['AI_CAMERA_NODE1_IP'],'NODE2_IP':os.environ['AI_CAMERA_NODE2_IP'],
       'NODE1_API_PORT':os.getenv('AI_CAMERA_NODE1_API_PORT','8080'),'NODE1_METRICS_PORT':os.getenv('AI_CAMERA_NODE1_METRICS_PORT','9101'),
       'NODE2_API_PORT':os.getenv('AI_CAMERA_NODE2_API_PORT','8082'),'RTP_PORT':os.getenv('AI_CAMERA_NODE1_RTP_PORT','5000'),
-      'PROFILE':os.getenv('AI_CAMERA_PROFILE','mjpeg_720p30'),'CAMERA_ID':os.getenv('AI_CAMERA_CAMERA_ID','c922_node2_gate'),
+      'PROFILE':os.getenv('AI_CAMERA_PROFILE','mjpeg_720p30'),'TRANSPORT':os.getenv('AI_CAMERA_TRANSPORT','rtp'),'CAMERA_ID':os.getenv('AI_CAMERA_CAMERA_ID','c922_node2_gate'),
       'DEVICE':os.getenv('AI_CAMERA_DEVICE','/dev/video0'),'EVENT_LOG':abs_path(root,os.getenv('AI_CAMERA_EVENT_LOG','results/node1/events.jsonl')),
       'LATENCY_THRESHOLD_MS':os.getenv('AI_CAMERA_LATENCY_THRESHOLD_MS','5.0'),'LATENCY_WINDOW_SAMPLES':os.getenv('AI_CAMERA_LATENCY_WINDOW_SAMPLES','120'),
     }

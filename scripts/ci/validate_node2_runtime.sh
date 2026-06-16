@@ -34,6 +34,8 @@ echo "[CI:NODE2] Controller import and profile commands"
 "$PYTHON_BIN" - <<'PY'
 import os
 from agents.node2.node2_streamer_controller import PROFILES, build_gstreamer_command
+from agents.node2.node2_timed_jpeg_sender import build_ffmpeg_command
+from services.common.timed_frame_protocol import fragment_jpeg_frame, TimedFrameReassembler
 for profile in sorted(PROFILES):
     cmd = build_gstreamer_command(profile, os.getenv('AI_CAMERA_TEST_NODE1_IP', '192.0.2.21'), 5000, '/dev/video0')
     joined = ' '.join(cmd)
@@ -42,6 +44,15 @@ for profile in sorted(PROFILES):
         raise SystemExit(f'{profile} missing rtpjpegpay')
     if profile == 'yuyv_640x480' and ('videoconvert' not in joined or 'format=UYVY' not in joined or 'rtpvrawpay' not in joined):
         raise SystemExit('yuyv_640x480 raw RTP profile is invalid')
+cmd = build_ffmpeg_command('mjpeg_720p30', '/dev/video0')
+joined = ' '.join(cmd)
+print('timed_jpeg_udp mjpeg_720p30 =>', joined)
+if 'ffmpeg' not in cmd[0] or '-f' not in cmd or 'image2pipe' not in joined:
+    raise SystemExit('timestamped JPEG ffmpeg sender command is invalid')
+packets = list(fragment_jpeg_frame(b'\xff\xd8test\xff\xd9', 1, sender_wall_ns=1, sender_monotonic_ns=2, max_payload=4))
+reasm = TimedFrameReassembler()
+assert any(reasm.push(p) is not None for p in packets)
+print('timestamped JPEG protocol OK')
 print('Node2 profiles OK')
 PY
 

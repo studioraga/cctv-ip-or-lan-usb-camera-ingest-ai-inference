@@ -30,6 +30,7 @@ class StartStreamRequest(BaseModel):
     port: int = Field(default=5000, ge=1, le=65535)
     profile: str = "mjpeg_720p30"
     device: str = "/dev/video0"
+    transport: str = Field(default="rtp", pattern="^(rtp|timed_jpeg_udp)$")
 
 
 class SwitchProfileRequest(BaseModel):
@@ -65,6 +66,8 @@ def _validate_start(req: StartStreamRequest) -> None:
         raise HTTPException(status_code=403, detail="stream destination is not authorized")
     if not policy.is_device_allowed(req.camera_id, req.device):
         raise HTTPException(status_code=403, detail="camera device is not authorized")
+    if req.transport == "timed_jpeg_udp" and req.profile.startswith("yuyv_"):
+        raise HTTPException(status_code=400, detail="timed_jpeg_udp supports MJPEG profiles only")
 
 
 @app.get("/health")
@@ -111,7 +114,7 @@ def stream_start(req: StartStreamRequest, request: Request):
     _require_trusted_client(request)
     _validate_start(req)
     try:
-        status = streamer_service.start(req.node1_ip, req.port, req.profile, req.device)
+        status = streamer_service.start(req.node1_ip, req.port, req.profile, req.device, req.transport)
         stream_starts.labels(req.profile).inc()
         stream_running.labels(req.profile).set(1)
         return status.__dict__

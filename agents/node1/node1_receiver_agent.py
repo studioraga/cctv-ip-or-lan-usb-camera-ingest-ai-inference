@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import signal
+import socket
 import sqlite3
 import threading
 import queue
@@ -35,6 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from services.common.bounded_slices import BoundedLatencyMonitor, LatencyWindowSummary
+from services.common.timed_frame_protocol import TimedFrameReassembler
 from services.common.event_db import EventDB
 from typing import Any, Dict, Optional
 
@@ -208,6 +210,9 @@ class Metrics:
         self.frame_gap_ms = None
         self.capture_read_ms = None
         self.capture_queue_wait_ms = None
+        self.e2e_latency_ms = None
+        self.e2e_frame_id = None
+        self.e2e_clock_delta_ms = None
         self.latency_window_samples = None
         self.latency_window_min_ms = None
         self.latency_window_max_ms = None
@@ -228,6 +233,9 @@ class Metrics:
                 self.frame_gap_ms = Histogram("ai_camera_frame_gap_ms", "Node1 accepted-frame gap in milliseconds", ["camera_id", "profile"])
                 self.capture_read_ms = Histogram("ai_camera_capture_read_ms", "OpenCV VideoCapture.read duration in milliseconds", ["camera_id", "profile"])
                 self.capture_queue_wait_ms = Histogram("ai_camera_capture_queue_wait_ms", "Frame wait time between capture worker and main receiver loop in milliseconds", ["camera_id", "profile"])
+                self.e2e_latency_ms = Histogram("ai_camera_e2e_latency_ms", "Node2 sender timestamp to Node1 decode-complete latency in milliseconds", ["camera_id", "profile", "transport"])
+                self.e2e_frame_id = Gauge("ai_camera_e2e_frame_id", "Latest correlated sender frame_id received by Node1", ["camera_id", "profile", "transport"])
+                self.e2e_clock_delta_ms = Gauge("ai_camera_e2e_clock_delta_ms", "Latest receiver_wall_ns - sender_wall_ns delta in milliseconds", ["camera_id", "profile", "transport"])
                 self.latency_window_samples = Gauge("ai_camera_latency_window_samples", "Number of samples in the rolling latency window", ["camera_id", "profile", "latency_kind"])
                 self.latency_window_min_ms = Gauge("ai_camera_latency_window_min_ms", "Minimum latency in the rolling window", ["camera_id", "profile", "latency_kind"])
                 self.latency_window_max_ms = Gauge("ai_camera_latency_window_max_ms", "Maximum latency in the rolling window", ["camera_id", "profile", "latency_kind"])
@@ -285,6 +293,14 @@ class Metrics:
     def observe_capture_queue_wait(self, camera_id: str, profile: str, value_ms: float):
         if self.capture_queue_wait_ms:
             self.capture_queue_wait_ms.labels(camera_id, profile).observe(value_ms)
+
+    def observe_e2e_latency(self, camera_id: str, profile: str, transport: str, value_ms: float, frame_id: int):
+        if self.e2e_latency_ms:
+            self.e2e_latency_ms.labels(camera_id, profile, transport).observe(value_ms)
+        if self.e2e_frame_id:
+            self.e2e_frame_id.labels(camera_id, profile, transport).set(frame_id)
+        if self.e2e_clock_delta_ms:
+            self.e2e_clock_delta_ms.labels(camera_id, profile, transport).set(value_ms)
 
     def set_latency_summary(self, camera_id: str, profile: str, summary: LatencyWindowSummary):
         labels = (camera_id, profile, summary.latency_kind)
@@ -414,6 +430,11 @@ class CapturedFrame:
     frame: np.ndarray
     read_start_ns: int
     read_done_ns: int
+    frame_id: Optional[int] = None
+    sender_wall_ns: Optional[int] = None
+    sender_monotonic_ns: Optional[int] = None
+    receiver_wall_ns: Optional[int] = None
+    transport: str = "rtp"
 
 
 class CaptureWorker:
@@ -479,9 +500,110 @@ class CaptureWorker:
         if self.thread.is_alive():
             self.thread.join(timeout=timeout)
 
+
+class TimedJpegUdpCaptureWorker:
+    """Receive timestamped JPEG/UDP frames and decode them on Node1.
+
+    This worker is used only with --transport timed_jpeg_udp. It reassembles
+    Node2 UDP fragments, decodes the JPEG with OpenCV, and preserves Node2
+    frame_id/sender_wall_ns for E2E latency correlation.
+    """
+
+    def __init__(self, bind_ip: str, port: int, max_queue: int = 2):
+        self.bind_ip = bind_ip
+        self.port = port
+        self.frames: "queue.Queue[CapturedFrame]" = queue.Queue(maxsize=max_queue)
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="timed-jpeg-udp-worker", daemon=True)
+        self.read_failures = 0
+        self.last_error: Optional[str] = None
+        self.reassembler = TimedFrameReassembler()
+        self.sock: Optional[socket.socket] = None
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def _put_latest(self, sample: CapturedFrame) -> None:
+        if self.frames.full():
+            try:
+                self.frames.get_nowait()
+            except queue.Empty:
+                pass
+        try:
+            self.frames.put_nowait(sample)
+        except queue.Full:
+            pass
+
+    def _run(self) -> None:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock = sock
+        sock.settimeout(0.2)
+        try:
+            sock.bind((self.bind_ip, self.port))
+            while not self.stop_event.is_set():
+                try:
+                    data, _addr = sock.recvfrom(65535)
+                except socket.timeout:
+                    continue
+                except OSError as exc:
+                    if not self.stop_event.is_set():
+                        self.read_failures += 1
+                        self.last_error = str(exc)
+                    break
+                try:
+                    assembled = self.reassembler.push(data)
+                    if assembled is None:
+                        continue
+                    read_start_ns = time.monotonic_ns()
+                    arr = np.frombuffer(assembled.jpeg, dtype=np.uint8)
+                    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    read_done_ns = time.monotonic_ns()
+                    receiver_wall_ns = time.time_ns()
+                    if frame is None:
+                        self.read_failures += 1
+                        continue
+                    self._put_latest(CapturedFrame(
+                        frame=frame,
+                        read_start_ns=read_start_ns,
+                        read_done_ns=read_done_ns,
+                        frame_id=assembled.frame_id,
+                        sender_wall_ns=assembled.sender_wall_ns,
+                        sender_monotonic_ns=assembled.sender_monotonic_ns,
+                        receiver_wall_ns=receiver_wall_ns,
+                        transport="timed_jpeg_udp",
+                    ))
+                except Exception as exc:
+                    self.read_failures += 1
+                    self.last_error = str(exc)
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def read_latest(self, timeout: float = 0.2) -> Optional[CapturedFrame]:
+        try:
+            return self.frames.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+
+    def join(self, timeout: float = 1.0) -> None:
+        if self.thread.is_alive():
+            self.thread.join(timeout=timeout)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Node1 RTP camera receiver agent")
     parser.add_argument("--profile", default="mjpeg_720p30", choices=sorted(PROFILES.keys()), help="Receiver profile. Must match sender profile.")
+    parser.add_argument("--transport", choices=["rtp", "timed_jpeg_udp"], default="rtp", help="Frame transport: existing RTP/GStreamer path or timestamped JPEG/UDP E2E path")
     parser.add_argument("--camera-id", default="c922_node2_gate")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--buffer-size", type=int, default=8 * 1024 * 1024)
@@ -510,11 +632,20 @@ def main() -> int:
     args = parser.parse_args()
 
     profile = PROFILES[args.profile]
-    pipeline = build_pipeline(args.profile, args.port, args.buffer_size, args.jitterbuffer, args.jitter_latency_ms)
+    pipeline = ""
+    if args.transport == "rtp":
+        pipeline = build_pipeline(args.profile, args.port, args.buffer_size, args.jitterbuffer, args.jitter_latency_ms)
+    elif args.transport == "timed_jpeg_udp":
+        if profile.get("encoding") != "JPEG":
+            raise SystemExit("timed_jpeg_udp transport currently supports MJPEG/JPEG profiles only")
     print(f"[INFO] Profile: {args.profile}")
+    print(f"[INFO] Transport: {args.transport}")
     print(f"[INFO] Description: {profile['description']}")
-    print("[INFO] Opening pipeline:")
-    print(pipeline)
+    if pipeline:
+        print("[INFO] Opening pipeline:")
+        print(pipeline)
+    else:
+        print(f"[INFO] Opening timestamped JPEG/UDP receiver on 0.0.0.0:{args.port}")
 
     metrics = Metrics(args.metrics, args.metrics_port)
     event_store = EventStore(args.db_path)
@@ -528,19 +659,24 @@ def main() -> int:
             "capture_read_ms": BoundedLatencyMonitor("capture_read_ms", args.latency_threshold_ms, args.latency_window_samples),
             "capture_queue_wait_ms": BoundedLatencyMonitor("capture_queue_wait_ms", args.latency_threshold_ms, args.latency_window_samples),
         }
+        if args.transport == "timed_jpeg_udp":
+            latency_monitors["e2e_latency_ms"] = BoundedLatencyMonitor("e2e_latency_ms", args.latency_threshold_ms, args.latency_window_samples)
         print(
             f"[INFO] Step 11 latency monitoring enabled: "
             f"threshold={args.latency_threshold_ms:.3f}ms, "
             f"window_samples={args.latency_window_samples}"
         )
 
-    cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-    if not cap.isOpened():
-        print("[ERROR] Failed to open GStreamer pipeline", file=sys.stderr)
-        event_store.close()
-        return 1
-
-    capture = CaptureWorker(cap, max_queue=2)
+    cap = None
+    if args.transport == "rtp":
+        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        if not cap.isOpened():
+            print("[ERROR] Failed to open GStreamer pipeline", file=sys.stderr)
+            event_store.close()
+            return 1
+        capture = CaptureWorker(cap, max_queue=2)
+    else:
+        capture = TimedJpegUdpCaptureWorker("0.0.0.0", args.port, max_queue=2)
     capture.start()
 
     frames_total = 0
@@ -556,6 +692,7 @@ def main() -> int:
         {
             "ts": time.time(), "iso_ts": now_iso(), "event": "receiver_started",
             "camera_id": args.camera_id, "profile": args.profile, "port": args.port,
+            "transport": args.transport,
             "pipeline": pipeline,
             "latency_monitor_enabled": bool(latency_monitors),
             "latency_threshold_ms": args.latency_threshold_ms,
@@ -612,10 +749,19 @@ def main() -> int:
             capture_queue_wait_ms = max(0.0, (now_ns - sample.read_done_ns) / 1_000_000.0)
             metrics.observe_capture_read(args.camera_id, args.profile, capture_read_ms)
             metrics.observe_capture_queue_wait(args.camera_id, args.profile, capture_queue_wait_ms)
+            e2e_latency_ms = None
+            if sample.sender_wall_ns is not None and sample.receiver_wall_ns is not None and sample.frame_id is not None:
+                e2e_latency_ms = (sample.receiver_wall_ns - sample.sender_wall_ns) / 1_000_000.0
+                if e2e_latency_ms >= 0:
+                    metrics.observe_e2e_latency(args.camera_id, args.profile, args.transport, e2e_latency_ms, sample.frame_id)
+                else:
+                    print(f"[WARN] Negative E2E latency {e2e_latency_ms:.3f} ms; check Node1/Node2 clock sync")
 
             if latency_monitors:
                 latency_monitors["capture_read_ms"].add(capture_read_ms)
                 latency_monitors["capture_queue_wait_ms"].add(capture_queue_wait_ms)
+                if e2e_latency_ms is not None and e2e_latency_ms >= 0 and "e2e_latency_ms" in latency_monitors:
+                    latency_monitors["e2e_latency_ms"].add(e2e_latency_ms)
                 if last_frame_monotonic_ns is not None:
                     frame_gap_ms = (now_ns - last_frame_monotonic_ns) / 1_000_000.0
                     metrics.observe_frame_gap(args.camera_id, args.profile, frame_gap_ms)
@@ -687,7 +833,7 @@ def main() -> int:
                     args.event_log,
                     {
                         "ts": now, "iso_ts": now_iso(), "event": "receiver_fps",
-                        "camera_id": args.camera_id, "profile": args.profile, "fps": fps,
+                        "camera_id": args.camera_id, "profile": args.profile, "transport": args.transport, "fps": fps,
                         "frame_shape": list(frame.shape), "infer_ms": infer_ms,
                         "frames_total": frames_total,
                     },
@@ -701,6 +847,7 @@ def main() -> int:
                             "event": "latency_window",
                             "camera_id": args.camera_id,
                             "profile": args.profile,
+                            "transport": args.transport,
                             **summary.as_dict(),
                         },
                     )
@@ -712,10 +859,11 @@ def main() -> int:
             capture.stop()
         except Exception as exc:
             print(f"[WARN] capture.stop() failed: {exc}")
-        try:
-            cap.release()
-        except Exception as exc:
-            print(f"[WARN] cap.release() failed: {exc}")
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception as exc:
+                print(f"[WARN] cap.release() failed: {exc}")
         try:
             capture.join(timeout=1.0)
             if capture.thread.is_alive():
@@ -733,7 +881,7 @@ def main() -> int:
             args.event_log,
             {
                 "ts": time.time(), "iso_ts": now_iso(), "event": "receiver_stopped",
-                "camera_id": args.camera_id, "profile": args.profile,
+                "camera_id": args.camera_id, "profile": args.profile, "transport": args.transport,
                 "frames_total": frames_total, "runtime_sec": time.time() - t_start,
                 "exit_code": exit_code,
             },

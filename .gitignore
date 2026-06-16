@@ -84,3 +84,34 @@ data/keyframes/
 *.bak
 *.back
 *.backup-*
+
+# Python runtime/cache artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Local virtual environments
+.venv/
+.venv.backup-*/
+
+# Runtime benchmark/output artifacts
+results/**/*.jsonl
+results/**/*.log
+results/**/*.txt
+*.db
+*.db-wal
+*.db-shm
+
+# Media/runtime evidence artifacts
+data/clips/
+data/keyframes/
+*.mp4
+*.jpg
+*.jpeg
+*.png
+
+# Local backup files
+*.bak
+*.back
+*.backup-*

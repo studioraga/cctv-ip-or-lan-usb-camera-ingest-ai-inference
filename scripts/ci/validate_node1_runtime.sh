@@ -48,6 +48,21 @@ print(db.list_cameras())
 PY
 rm -f "$TMP_DB"
 
+
+echo "[CI:NODE1] Step 12 E2E/Yolo modules"
+"$PYTHON_BIN" - <<'PY'
+from services.common.timed_frame_protocol import TimedFrameReassembler, fragment_jpeg_frame
+from services.node1_inference_worker.detectors.yolo_onnx import LetterboxMeta, decode_yolo_output
+import numpy as np
+packets = list(fragment_jpeg_frame(b'\xff\xd8ci\xff\xd9', 1, sender_wall_ns=1, sender_monotonic_ns=2, max_payload=4))
+reasm = TimedFrameReassembler()
+assert any(reasm.push(p) is not None for p in packets)
+pred = np.array([[[100, 100, 40, 40, 0.9, 0.9]]], dtype=np.float32)
+dets = decode_yolo_output([pred], LetterboxMeta((640, 640), (640, 640), 1.0, 0.0, 0.0), ['object'], 0.25, 0.45)
+print('timed frame protocol OK')
+print('YOLO postprocess detections:', len(dets))
+PY
+
 echo "[CI:NODE1] API module import"
 "$PYTHON_BIN" - <<'PY'
 import services.node1_api_gateway.app as app
