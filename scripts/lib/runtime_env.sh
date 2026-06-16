@@ -29,6 +29,8 @@ export AI_CAMERA_NODES_CONFIG="${AI_CAMERA_NODES_CONFIG:-configs/runtime/nodes.y
 export AI_CAMERA_CLIP_ROOT="${AI_CAMERA_CLIP_ROOT:-data/clips}"
 export AI_CAMERA_KEYFRAME_ROOT="${AI_CAMERA_KEYFRAME_ROOT:-data/keyframes}"
 export AI_CAMERA_EVENT_LOG="${AI_CAMERA_EVENT_LOG:-results/node1/events.jsonl}"
+export AI_CAMERA_LATENCY_THRESHOLD_MS="${AI_CAMERA_LATENCY_THRESHOLD_MS:-5.0}"
+export AI_CAMERA_LATENCY_WINDOW_SAMPLES="${AI_CAMERA_LATENCY_WINDOW_SAMPLES:-120}"
 
 ai_camera_abs_path() {
   local p="$1"

@@ -55,7 +55,7 @@ Prepare and install Node1 services:
 set -a; source deploy/ai-camera.env; set +a
 export AI_CAMERA_REPO_ROOT="$PWD"
 ./scripts/common/prepare_deployment.sh node1
-sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG \
+sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG,AI_CAMERA_LATENCY_THRESHOLD_MS,AI_CAMERA_LATENCY_WINDOW_SAMPLES \
   "$PWD/.venv/bin/python" scripts/common/install_systemd_units.py --role node1
 sudo systemctl daemon-reload
 sudo systemctl enable --now node1-ai-camera-api.service node1-ai-camera-receiver.service
@@ -110,7 +110,7 @@ Prepare and install Node2 service:
 set -a; source deploy/ai-camera.env; set +a
 export AI_CAMERA_REPO_ROOT="$PWD"
 ./scripts/common/prepare_deployment.sh node2
-sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG \
+sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG,AI_CAMERA_LATENCY_THRESHOLD_MS,AI_CAMERA_LATENCY_WINDOW_SAMPLES \
   "$PWD/.venv/bin/python" scripts/common/install_systemd_units.py --role node2
 sudo systemctl daemon-reload
 sudo systemctl enable --now node2-camera-control-agent.service
@@ -171,4 +171,31 @@ RUN_STREAM=1 ./scripts/validate_step10_reproducible_deployment.sh node1
 ```
 
 The script writes timestamped logs under `results/step10/`.
+
+## Step 11 bounded-slices latency validation
+
+After Step 9/10 streaming is stable, validate Node1 receiver-side latency
+monitoring from trusted Node1:
+
+```bash
+./scripts/validate_step11_latency_monitoring.sh
+```
+
+The receiver exports bounded-slices latency metrics such as:
+
+```text
+ai_camera_frame_gap_ms
+ai_camera_capture_read_ms
+ai_camera_capture_queue_wait_ms
+ai_camera_latency_bounded_slice_count
+ai_camera_latency_window_variation_ms
+ai_camera_latency_window_violation
+```
+
+Tune the default threshold/window in `deploy/ai-camera.env`:
+
+```text
+AI_CAMERA_LATENCY_THRESHOLD_MS=5.0
+AI_CAMERA_LATENCY_WINDOW_SAMPLES=120
+```
 

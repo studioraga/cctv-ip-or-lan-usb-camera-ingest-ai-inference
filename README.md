@@ -164,7 +164,7 @@ Prepare and install Node1 systemd units:
 set -a; source deploy/ai-camera.env; set +a
 export AI_CAMERA_REPO_ROOT="$PWD"
 ./scripts/common/prepare_deployment.sh node1
-sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG \
+sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG,AI_CAMERA_LATENCY_THRESHOLD_MS,AI_CAMERA_LATENCY_WINDOW_SAMPLES \
   "$PWD/.venv/bin/python" scripts/common/install_systemd_units.py --role node1
 sudo systemctl daemon-reload
 sudo systemctl enable --now node1-ai-camera-api.service node1-ai-camera-receiver.service
@@ -223,7 +223,7 @@ Prepare and install Node2 service:
 set -a; source deploy/ai-camera.env; set +a
 export AI_CAMERA_REPO_ROOT="$PWD"
 ./scripts/common/prepare_deployment.sh node2
-sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG \
+sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG,AI_CAMERA_LATENCY_THRESHOLD_MS,AI_CAMERA_LATENCY_WINDOW_SAMPLES \
   "$PWD/.venv/bin/python" scripts/common/install_systemd_units.py --role node2
 sudo systemctl daemon-reload
 sudo systemctl enable --now node2-camera-control-agent.service
@@ -273,6 +273,79 @@ ai_camera_receiver_fps{camera_id="c922_node2_gate",profile="mjpeg_720p30"} ~15
 ai_camera_frames_total{camera_id="c922_node2_gate",profile="mjpeg_720p30"} increasing
 ```
 
+---
+
+## 8. Step 11 video frame latency monitoring with bounded slices
+
+Step 11 adds rolling latency-window stability monitoring to the Node1 receiver.
+It uses the bounded-slices pattern to count all contiguous periods where:
+
+```text
+max_latency_ms - min_latency_ms <= threshold_ms
+```
+
+Default threshold: `5 ms`.
+Default rolling window: `120 samples`.
+
+The current RTP/JPEG path does not yet carry a Node2 sender timestamp or frame
+ID, so Step 11 deliberately reports **Node1-local latency signals**:
+
+```text
+frame_gap_ms                 # accepted-frame interval on Node1
+capture_read_ms              # OpenCV VideoCapture.read duration
+capture_queue_wait_ms        # capture-worker to main-loop wait time
+```
+
+The receiver emits periodic JSONL events with `event="latency_window"` and
+exports Prometheus metrics:
+
+```text
+ai_camera_frame_gap_ms
+ai_camera_capture_read_ms
+ai_camera_capture_queue_wait_ms
+ai_camera_latency_window_samples
+ai_camera_latency_window_min_ms
+ai_camera_latency_window_max_ms
+ai_camera_latency_window_variation_ms
+ai_camera_latency_bounded_slice_count
+ai_camera_latency_longest_stable_window
+ai_camera_latency_latest_stable_window
+ai_camera_latency_window_violation
+ai_camera_latency_window_violations_total
+```
+
+Run the validation from trusted Node1:
+
+```bash
+./scripts/validate_step11_latency_monitoring.sh
+```
+
+Manual metric check during a stream:
+
+```bash
+curl -fsS http://192.168.29.20:9101/metrics \
+  | grep -E 'ai_camera_frame_gap_ms|ai_camera_latency_bounded_slice_count|ai_camera_latency_window_variation_ms' -A 2
+```
+
+Tune receiver arguments if needed:
+
+```bash
+python -m agents.node1.node1_receiver_agent \
+  --profile mjpeg_720p30 \
+  --port 5000 \
+  --metrics \
+  --latency-threshold-ms 5 \
+  --latency-window-samples 120
+```
+
+The bounded-slices algorithm itself lives in:
+
+```text
+services/common/bounded_slices.py
+```
+
+---
+
 Evidence checks on Node1:
 
 ```bash
@@ -287,7 +360,7 @@ LIMIT 10;
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -299,7 +372,7 @@ LIMIT 10;
 
 ---
 
-## 9. Development and CI checks
+## 10. Development and CI checks
 
 ```bash
 ./scripts/ci/validate_static.sh
@@ -308,6 +381,7 @@ source .venv/bin/activate
 ./scripts/ci/validate_node2_runtime.sh
 ./scripts/common/prepare_deployment.sh node1
 ./scripts/common/prepare_deployment.sh node2
+./scripts/validate_step11_latency_monitoring.sh
 ```
 
 See also:
@@ -318,5 +392,6 @@ See also:
 - `docs/CI_CD_VALIDATION_PLAN.md`
 - `docs/NODE1_STEP7_VALIDATION_STATUS.md`
 - `docs/STEP1_MIGRATIONS_POLICY_MEDIA_SECURITY.md`
+- `docs/STEP11_BOUNDED_SLICES_LATENCY.md`
 - `docs/TASK1_IMPLEMENTATION_NOTES.md`
 - `docs/GIT_COMMIT_MESSAGE_VALIDATION_MILESTONE.md`

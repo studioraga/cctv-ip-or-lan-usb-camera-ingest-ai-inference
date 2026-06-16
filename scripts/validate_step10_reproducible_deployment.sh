@@ -85,7 +85,7 @@ if [ "$ROLE" = "node1" ]; then
   systemctl is-active node1-ai-camera-receiver.service 2>/dev/null | tee -a "$OUT" || true
   if [ -n "${AI_CAMERA_NODE1_IP:-}" ]; then
     curl -fsS "http://${AI_CAMERA_NODE1_IP}:${AI_CAMERA_NODE1_API_PORT:-8080}/health" | tee -a "$OUT" || log "[WARN] Node1 API health failed"
-    curl -fsS "http://${AI_CAMERA_NODE1_IP}:${AI_CAMERA_NODE1_METRICS_PORT:-9101}/metrics" | grep -E 'ai_camera_receiver_fps|ai_camera_frames_total|ai_camera_decode_failures_total' -A 2 | tee -a "$OUT" || log "[WARN] Node1 receiver metrics failed"
+    curl -fsS "http://${AI_CAMERA_NODE1_IP}:${AI_CAMERA_NODE1_METRICS_PORT:-9101}/metrics" | grep -E 'ai_camera_receiver_fps|ai_camera_frames_total|ai_camera_decode_failures_total|ai_camera_latency_bounded_slice_count|ai_camera_latency_window_variation_ms' -A 2 | tee -a "$OUT" || log "[WARN] Node1 receiver metrics failed"
   fi
 elif [ "$ROLE" = "node2" ]; then
   systemctl is-active node2-camera-control-agent.service 2>/dev/null | tee -a "$OUT" || true

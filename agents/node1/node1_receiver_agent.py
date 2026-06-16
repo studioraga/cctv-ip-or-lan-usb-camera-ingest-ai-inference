@@ -31,8 +31,10 @@ import sys
 import time
 import uuid
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from services.common.bounded_slices import BoundedLatencyMonitor, LatencyWindowSummary
 from services.common.event_db import EventDB
 from typing import Any, Dict, Optional
 
@@ -203,6 +205,18 @@ class Metrics:
         self.inference_latency = None
         self.events_total = None
         self.last_frame_age = None
+        self.frame_gap_ms = None
+        self.capture_read_ms = None
+        self.capture_queue_wait_ms = None
+        self.latency_window_samples = None
+        self.latency_window_min_ms = None
+        self.latency_window_max_ms = None
+        self.latency_window_variation_ms = None
+        self.latency_bounded_slice_count = None
+        self.latency_longest_stable_window = None
+        self.latency_latest_stable_window = None
+        self.latency_window_violation = None
+        self.latency_window_violations = None
         if self.enabled:
             try:
                 self.receiver_fps = Gauge("ai_camera_receiver_fps", "Receiver FPS", ["camera_id", "profile"])
@@ -211,6 +225,18 @@ class Metrics:
                 self.inference_latency = Histogram("ai_camera_inference_latency_ms", "Inference latency in milliseconds", ["camera_id", "model"])
                 self.events_total = Counter("ai_camera_events_total", "AI camera events", ["camera_id", "event_type"])
                 self.last_frame_age = Gauge("ai_camera_receiver_last_frame_age_seconds", "Seconds since last received frame", ["camera_id", "profile"])
+                self.frame_gap_ms = Histogram("ai_camera_frame_gap_ms", "Node1 accepted-frame gap in milliseconds", ["camera_id", "profile"])
+                self.capture_read_ms = Histogram("ai_camera_capture_read_ms", "OpenCV VideoCapture.read duration in milliseconds", ["camera_id", "profile"])
+                self.capture_queue_wait_ms = Histogram("ai_camera_capture_queue_wait_ms", "Frame wait time between capture worker and main receiver loop in milliseconds", ["camera_id", "profile"])
+                self.latency_window_samples = Gauge("ai_camera_latency_window_samples", "Number of samples in the rolling latency window", ["camera_id", "profile", "latency_kind"])
+                self.latency_window_min_ms = Gauge("ai_camera_latency_window_min_ms", "Minimum latency in the rolling window", ["camera_id", "profile", "latency_kind"])
+                self.latency_window_max_ms = Gauge("ai_camera_latency_window_max_ms", "Maximum latency in the rolling window", ["camera_id", "profile", "latency_kind"])
+                self.latency_window_variation_ms = Gauge("ai_camera_latency_window_variation_ms", "max(latency)-min(latency) in the rolling window", ["camera_id", "profile", "latency_kind"])
+                self.latency_bounded_slice_count = Gauge("ai_camera_latency_bounded_slice_count", "Count of bounded slices in the rolling latency window", ["camera_id", "profile", "latency_kind"])
+                self.latency_longest_stable_window = Gauge("ai_camera_latency_longest_stable_window", "Longest bounded latency window length in samples", ["camera_id", "profile", "latency_kind"])
+                self.latency_latest_stable_window = Gauge("ai_camera_latency_latest_stable_window", "Latest bounded latency window length ending at the newest sample", ["camera_id", "profile", "latency_kind"])
+                self.latency_window_violation = Gauge("ai_camera_latency_window_violation", "1 when rolling latency variation exceeds threshold, else 0", ["camera_id", "profile", "latency_kind"])
+                self.latency_window_violations = Counter("ai_camera_latency_window_violations_total", "Number of reported latency windows that exceeded threshold", ["camera_id", "profile", "latency_kind"])
                 start_http_server(port)
                 print(f"[INFO] Prometheus metrics listening on :{port}/metrics")
             except ValueError as exc:
@@ -247,6 +273,39 @@ class Metrics:
     def set_last_frame_age(self, camera_id: str, profile: str, age_sec: float):
         if self.last_frame_age:
             self.last_frame_age.labels(camera_id, profile).set(age_sec)
+
+    def observe_frame_gap(self, camera_id: str, profile: str, value_ms: float):
+        if self.frame_gap_ms:
+            self.frame_gap_ms.labels(camera_id, profile).observe(value_ms)
+
+    def observe_capture_read(self, camera_id: str, profile: str, value_ms: float):
+        if self.capture_read_ms:
+            self.capture_read_ms.labels(camera_id, profile).observe(value_ms)
+
+    def observe_capture_queue_wait(self, camera_id: str, profile: str, value_ms: float):
+        if self.capture_queue_wait_ms:
+            self.capture_queue_wait_ms.labels(camera_id, profile).observe(value_ms)
+
+    def set_latency_summary(self, camera_id: str, profile: str, summary: LatencyWindowSummary):
+        labels = (camera_id, profile, summary.latency_kind)
+        if self.latency_window_samples:
+            self.latency_window_samples.labels(*labels).set(summary.sample_count)
+        if summary.min_ms is not None and self.latency_window_min_ms:
+            self.latency_window_min_ms.labels(*labels).set(summary.min_ms)
+        if summary.max_ms is not None and self.latency_window_max_ms:
+            self.latency_window_max_ms.labels(*labels).set(summary.max_ms)
+        if summary.variation_ms is not None and self.latency_window_variation_ms:
+            self.latency_window_variation_ms.labels(*labels).set(summary.variation_ms)
+        if self.latency_bounded_slice_count:
+            self.latency_bounded_slice_count.labels(*labels).set(summary.bounded_slice_count)
+        if self.latency_longest_stable_window:
+            self.latency_longest_stable_window.labels(*labels).set(summary.longest_stable_window)
+        if self.latency_latest_stable_window:
+            self.latency_latest_stable_window.labels(*labels).set(summary.latest_stable_window)
+        if self.latency_window_violation:
+            self.latency_window_violation.labels(*labels).set(1 if summary.violation else 0)
+        if summary.violation and self.latency_window_violations:
+            self.latency_window_violations.labels(*labels).inc()
 
 
 class OptionalOnnxModel:
@@ -343,6 +402,20 @@ def draw_overlay(frame: np.ndarray, profile_name: str, fps: float, infer_ms: Opt
 
 
 
+@dataclass(frozen=True)
+class CapturedFrame:
+    """Frame plus local monotonic timestamps captured on Node1.
+
+    These timestamps intentionally measure Node1-local receiver behavior. They
+    do not claim true Node2-capture-to-Node1-receive latency because the RTP/JPEG
+    payload does not yet carry a sender frame_id or sender timestamp.
+    """
+
+    frame: np.ndarray
+    read_start_ns: int
+    read_done_ns: int
+
+
 class CaptureWorker:
     """Read OpenCV frames in a daemon thread so the main loop can enforce timeouts.
 
@@ -353,7 +426,7 @@ class CaptureWorker:
 
     def __init__(self, cap: cv2.VideoCapture, max_queue: int = 2):
         self.cap = cap
-        self.frames: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=max_queue)
+        self.frames: "queue.Queue[CapturedFrame]" = queue.Queue(maxsize=max_queue)
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._run, name="capture-worker", daemon=True)
         self.read_failures = 0
@@ -362,7 +435,7 @@ class CaptureWorker:
     def start(self) -> None:
         self.thread.start()
 
-    def _put_latest(self, frame: np.ndarray) -> None:
+    def _put_latest(self, sample: CapturedFrame) -> None:
         # Keep only the latest frame to preserve realtime behavior.
         if self.frames.full():
             try:
@@ -370,14 +443,16 @@ class CaptureWorker:
             except queue.Empty:
                 pass
         try:
-            self.frames.put_nowait(frame)
+            self.frames.put_nowait(sample)
         except queue.Full:
             pass
 
     def _run(self) -> None:
         while not self.stop_event.is_set():
             try:
+                read_start_ns = time.monotonic_ns()
                 ok, frame = self.cap.read()
+                read_done_ns = time.monotonic_ns()
             except Exception as exc:  # defensive; OpenCV usually returns False instead
                 self.read_failures += 1
                 self.last_error = str(exc)
@@ -389,9 +464,9 @@ class CaptureWorker:
                 time.sleep(0.05)
                 continue
 
-            self._put_latest(frame)
+            self._put_latest(CapturedFrame(frame=frame, read_start_ns=read_start_ns, read_done_ns=read_done_ns))
 
-    def read_latest(self, timeout: float = 0.2) -> Optional[np.ndarray]:
+    def read_latest(self, timeout: float = 0.2) -> Optional[CapturedFrame]:
         try:
             return self.frames.get(timeout=timeout)
         except queue.Empty:
@@ -429,6 +504,9 @@ def main() -> int:
     parser.add_argument("--no-frame-timeout-sec", type=float, default=10.0, help="Exit if no frames are received for this many seconds after at least one frame has arrived")
     parser.add_argument("--startup-timeout-sec", type=float, default=30.0, help="Exit if the first frame does not arrive within this many seconds")
     parser.add_argument("--exit-on-no-frames", action=argparse.BooleanOptionalAction, default=True, help="Exit instead of looping forever when the stream disappears")
+    parser.add_argument("--latency-monitor", action=argparse.BooleanOptionalAction, default=True, help="Enable Step 11 rolling latency-window monitoring")
+    parser.add_argument("--latency-threshold-ms", type=float, default=5.0, help="Maximum allowed max-min variation inside a bounded latency window")
+    parser.add_argument("--latency-window-samples", type=int, default=120, help="Rolling sample count for bounded-slices latency summaries")
     args = parser.parse_args()
 
     profile = PROFILES[args.profile]
@@ -443,6 +521,18 @@ def main() -> int:
     model = OptionalOnnxModel(args.model)
     motion = MotionTrigger(args.motion_events, args.motion_threshold, args.motion_cooldown_sec)
     frame_buffer = deque(maxlen=max(1, int(args.pre_event_sec * float(profile["fps"]))))
+    latency_monitors: dict[str, BoundedLatencyMonitor] = {}
+    if args.latency_monitor:
+        latency_monitors = {
+            "frame_gap_ms": BoundedLatencyMonitor("frame_gap_ms", args.latency_threshold_ms, args.latency_window_samples),
+            "capture_read_ms": BoundedLatencyMonitor("capture_read_ms", args.latency_threshold_ms, args.latency_window_samples),
+            "capture_queue_wait_ms": BoundedLatencyMonitor("capture_queue_wait_ms", args.latency_threshold_ms, args.latency_window_samples),
+        }
+        print(
+            f"[INFO] Step 11 latency monitoring enabled: "
+            f"threshold={args.latency_threshold_ms:.3f}ms, "
+            f"window_samples={args.latency_window_samples}"
+        )
 
     cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
     if not cap.isOpened():
@@ -459,6 +549,7 @@ def main() -> int:
     t_start = time.time()
     t_last_report = t_start
     last_frame_ts: Optional[float] = None
+    last_frame_monotonic_ns: Optional[int] = None
 
     write_jsonl(
         args.event_log,
@@ -466,6 +557,9 @@ def main() -> int:
             "ts": time.time(), "iso_ts": now_iso(), "event": "receiver_started",
             "camera_id": args.camera_id, "profile": args.profile, "port": args.port,
             "pipeline": pipeline,
+            "latency_monitor_enabled": bool(latency_monitors),
+            "latency_threshold_ms": args.latency_threshold_ms,
+            "latency_window_samples": args.latency_window_samples,
         },
     )
 
@@ -475,6 +569,7 @@ def main() -> int:
         while RUNNING:
             frame = capture.read_latest(timeout=0.2)
             now = time.time()
+            now_ns = time.monotonic_ns()
 
             if last_frame_ts is not None:
                 metrics.set_last_frame_age(args.camera_id, args.profile, now - last_frame_ts)
@@ -510,6 +605,22 @@ def main() -> int:
             consecutive_read_failures = 0
             last_frame_ts = now
             metrics.set_last_frame_age(args.camera_id, args.profile, 0.0)
+
+            sample = frame
+            frame = sample.frame
+            capture_read_ms = (sample.read_done_ns - sample.read_start_ns) / 1_000_000.0
+            capture_queue_wait_ms = max(0.0, (now_ns - sample.read_done_ns) / 1_000_000.0)
+            metrics.observe_capture_read(args.camera_id, args.profile, capture_read_ms)
+            metrics.observe_capture_queue_wait(args.camera_id, args.profile, capture_queue_wait_ms)
+
+            if latency_monitors:
+                latency_monitors["capture_read_ms"].add(capture_read_ms)
+                latency_monitors["capture_queue_wait_ms"].add(capture_queue_wait_ms)
+                if last_frame_monotonic_ns is not None:
+                    frame_gap_ms = (now_ns - last_frame_monotonic_ns) / 1_000_000.0
+                    metrics.observe_frame_gap(args.camera_id, args.profile, frame_gap_ms)
+                    latency_monitors["frame_gap_ms"].add(frame_gap_ms)
+            last_frame_monotonic_ns = now_ns
 
             frames_total += 1
             frames_interval += 1
@@ -558,7 +669,20 @@ def main() -> int:
             if now - t_last_report >= args.report_interval:
                 fps = frames_interval / max(now - t_last_report, 1e-9)
                 metrics.set_fps(args.camera_id, args.profile, fps)
-                print(f"[INFO] profile={args.profile}, FPS={fps:.2f}, frame={frame.shape}, infer_ms={infer_ms}")
+                latency_summaries = [m.summary() for m in latency_monitors.values()]
+                for summary in latency_summaries:
+                    metrics.set_latency_summary(args.camera_id, args.profile, summary)
+
+                latency_text = ""
+                if latency_summaries:
+                    primary = next((s for s in latency_summaries if s.latency_kind == "frame_gap_ms"), latency_summaries[0])
+                    variation = "None" if primary.variation_ms is None else f"{primary.variation_ms:.3f}"
+                    latency_text = (
+                        f", latency_kind={primary.latency_kind}, latency_samples={primary.sample_count}, "
+                        f"variation_ms={variation}, bounded_slices={primary.bounded_slice_count}, "
+                        f"longest_stable={primary.longest_stable_window}, violation={primary.violation}"
+                    )
+                print(f"[INFO] profile={args.profile}, FPS={fps:.2f}, frame={frame.shape}, infer_ms={infer_ms}{latency_text}")
                 write_jsonl(
                     args.event_log,
                     {
@@ -568,6 +692,18 @@ def main() -> int:
                         "frames_total": frames_total,
                     },
                 )
+                for summary in latency_summaries:
+                    write_jsonl(
+                        args.event_log,
+                        {
+                            "ts": now,
+                            "iso_ts": now_iso(),
+                            "event": "latency_window",
+                            "camera_id": args.camera_id,
+                            "profile": args.profile,
+                            **summary.as_dict(),
+                        },
+                    )
                 frames_interval = 0
                 t_last_report = now
     finally:

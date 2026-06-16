@@ -15,6 +15,7 @@ This repository extends the working Node1/Node2 camera transport into a local-fi
 9. Deterministic query endpoint scaffolding.
 10. Qdrant adapter scaffold for future vector/event search.
 11. Policy validation, systemd service templates, Docker/Prometheus artifacts, and runtime render scripts.
+12. Step 11 bounded-slices latency monitoring for Node1 receiver-side frame timing stability.
 
 ## Step 8/9 validated additions
 
@@ -48,13 +49,14 @@ Node1 trusted control client
 | Manual sender and API sender cannot both own `/dev/video0` | API start can exit with rc=1 and `Device busy` | Stop manual `gst-launch` before API streaming |
 | Node2 local `/stream/status` can return 403 | Policy trusts Node1, not every local caller | Query Node2 stream-control endpoints from Node1 |
 | Runtime artifacts appeared in the archive | Source archives become large/non-portable | `.gitignore` and sync exclusions exclude `.venv`, DB, clips, keyframes, pycache, results |
+| Node2 RTP/JPEG does not carry sender timestamps yet | True Node2-to-Node1 end-to-end latency cannot be claimed | Step 11 reports Node1-local `frame_gap_ms`, `capture_read_ms`, and `capture_queue_wait_ms` until sender frame IDs/timestamps are added |
 
 ## Next implementation direction
 
-After this baseline, the next clean task is operational hardening and reproducibility:
+After this baseline, the next clean task is deeper benchmark validation:
 
-1. Keep source archive clean of runtime/generated artifacts.
-2. Add Step 8/9 runbook sections to README and deployment docs.
-3. Preserve the venv setup rules in scripts and docs.
-4. Add a repeatable validation script for API-controlled streaming.
-5. Commit the validated source changes before adding object detection or model-serving features.
+1. Run Step 11 validation on Node1 with `./scripts/validate_step11_latency_monitoring.sh`.
+2. Capture `latency_window` JSONL records for each profile.
+3. Compare `mjpeg_480p30`, `mjpeg_720p30`, `mjpeg_720p60`, `mjpeg_1080p30`, and `yuyv_640x480`.
+4. Add Node2 sender frame IDs/timestamps for true end-to-end latency in a later milestone.
+5. Commit validated results before adding object detection or model-serving features.

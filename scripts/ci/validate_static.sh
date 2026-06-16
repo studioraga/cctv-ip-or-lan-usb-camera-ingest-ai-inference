@@ -8,6 +8,7 @@ echo "[CI] Python compile checks"
 python3 -m py_compile \
   agents/node1/node1_receiver_agent.py \
   agents/node2/node2_streamer_controller.py \
+  services/common/bounded_slices.py \
   services/common/event_db.py \
   services/common/policy.py \
   services/node1_api_gateway/app.py \

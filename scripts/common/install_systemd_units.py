@@ -34,6 +34,7 @@ def main() -> int:
       'NODE2_API_PORT':os.getenv('AI_CAMERA_NODE2_API_PORT','8082'),'RTP_PORT':os.getenv('AI_CAMERA_NODE1_RTP_PORT','5000'),
       'PROFILE':os.getenv('AI_CAMERA_PROFILE','mjpeg_720p30'),'CAMERA_ID':os.getenv('AI_CAMERA_CAMERA_ID','c922_node2_gate'),
       'DEVICE':os.getenv('AI_CAMERA_DEVICE','/dev/video0'),'EVENT_LOG':abs_path(root,os.getenv('AI_CAMERA_EVENT_LOG','results/node1/events.jsonl')),
+      'LATENCY_THRESHOLD_MS':os.getenv('AI_CAMERA_LATENCY_THRESHOLD_MS','5.0'),'LATENCY_WINDOW_SAMPLES':os.getenv('AI_CAMERA_LATENCY_WINDOW_SAMPLES','120'),
     }
     units=['node1-ai-camera-api','node1-ai-camera-receiver'] if args.role=='node1' else ['node2-camera-control-agent']
     out=Path(args.output_dir)
