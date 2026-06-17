@@ -162,3 +162,96 @@ class EventDB:
             ),
         )
         self.conn.commit()
+
+    # ------------------------------------------------------------------
+    # Capture-session dataset API (Step 13)
+    # ------------------------------------------------------------------
+
+    def create_capture_session(self, session: Dict[str, Any]) -> None:
+        now = now_iso()
+        self.conn.execute(
+            """
+            INSERT INTO capture_sessions(
+                session_id,camera_id,requested_by,requested_source,profile,transport,
+                device,node1_ip,node2_ip,udp_port,duration_sec,status,dataset_path,
+                manifest_path,started_at,ended_at,error,frames_written,bytes_written,
+                dropped_frames,frame_stride,max_bytes,notes,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                session["session_id"], session["camera_id"], session.get("requested_by"),
+                session.get("requested_source"), session["profile"], session["transport"],
+                session["device"], session["node1_ip"], session["node2_ip"],
+                int(session["udp_port"]), int(session["duration_sec"]),
+                session.get("status", "pending"), session["dataset_path"],
+                session.get("manifest_path"), session.get("started_at"),
+                session.get("ended_at"), session.get("error"),
+                int(session.get("frames_written", 0)), int(session.get("bytes_written", 0)),
+                int(session.get("dropped_frames", 0)), int(session.get("frame_stride", 1)),
+                session.get("max_bytes"), session.get("notes", ""), now, now,
+            ),
+        )
+        self.conn.commit()
+
+    def update_capture_session(self, session_id: str, **fields: Any) -> None:
+        if not fields:
+            return
+        fields.setdefault("updated_at", now_iso())
+        allowed = {
+            "status", "manifest_path", "started_at", "ended_at", "error",
+            "frames_written", "bytes_written", "dropped_frames", "dataset_path",
+            "updated_at",
+        }
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        sql = "UPDATE capture_sessions SET " + ", ".join(f"{k}=?" for k in updates) + " WHERE session_id=?"
+        self.conn.execute(sql, [*updates.values(), session_id])
+        self.conn.commit()
+
+    def get_capture_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute("SELECT * FROM capture_sessions WHERE session_id=?", (session_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_active_capture_session(self, camera_id: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT * FROM capture_sessions
+            WHERE camera_id=? AND status IN ('pending','running')
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (camera_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_capture_sessions(self, camera_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        if camera_id:
+            rows = self.conn.execute(
+                "SELECT * FROM capture_sessions WHERE camera_id=? ORDER BY created_at DESC LIMIT ?",
+                (camera_id, limit),
+            )
+        else:
+            rows = self.conn.execute("SELECT * FROM capture_sessions ORDER BY created_at DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
+
+    def insert_capture_artifact(self, artifact: Dict[str, Any]) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO capture_artifacts(
+                artifact_id,session_id,artifact_type,path,media_type,size_bytes,sha256,created_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                artifact["artifact_id"], artifact["session_id"], artifact["artifact_type"],
+                artifact["path"], artifact.get("media_type"), artifact.get("size_bytes"),
+                artifact.get("sha256"), now_iso(),
+            ),
+        )
+        self.conn.commit()
+
+    def list_capture_artifacts(self, session_id: str) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM capture_artifacts WHERE session_id=? ORDER BY created_at, artifact_type",
+            (session_id,),
+        )
+        return [dict(r) for r in rows]

@@ -8,6 +8,7 @@ cameras:
   - 192.168.29.20
   allowed_ports:
   - 5000
+  - 5001
   allowed_profiles:
   - mjpeg_480p30
   - mjpeg_720p30
@@ -17,6 +18,7 @@ cameras:
 media:
   clip_root: data/clips
   keyframe_root: data/keyframes
+  dataset_root: data/datasets
 node2_control:
   trusted_client_ips:
   - 192.168.29.20
@@ -29,11 +31,23 @@ network_rules:
   protocol: udp
   destination_port: 5000
   action: allow
+- id: allow_node2_capture_to_node1
+  source_ip: 192.168.29.188
+  destination_ip: 192.168.29.20
+  protocol: udp
+  destination_port: 5001
+  action: allow
 - id: deny_untrusted_camera_sources
   source_ip: '*'
   destination_ip: 192.168.29.20
   protocol: udp
   destination_port: 5000
+  action: deny
+- id: deny_untrusted_capture_sources
+  source_ip: '*'
+  destination_ip: 192.168.29.20
+  protocol: udp
+  destination_port: 5001
   action: deny
 observability:
   require_metrics: true

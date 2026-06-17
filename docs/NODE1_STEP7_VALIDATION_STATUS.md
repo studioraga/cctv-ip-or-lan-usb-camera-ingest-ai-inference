@@ -90,3 +90,17 @@ Node1 metrics endpoint             PASS
 Node1 RTP receiver port            PASS
 Node1 event DB and JSONL evidence  PASS
 ```
+
+---
+
+## Later status through Step 13
+
+This file records the earlier Node1 Step 7/9 validation history. The current
+working baseline has advanced to Step 13:
+
+- Node1 API and receiver services remain operational.
+- Node1 API now also serves `/ui/capture`, `/capture/sessions`, and dataset artifact endpoints.
+- Node1 runs the Prometheus/Grafana Docker stack for the `AI Camera Capture Session Demo` dashboard.
+- Step 13 capture sessions write source-JPEG datasets under `data/datasets/{session_id}/`.
+
+Use `docs/STEP13_GRAFANA_CAPTURE_DATASET.md` for the current demo runbook.

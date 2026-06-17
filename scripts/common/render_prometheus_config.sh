@@ -4,5 +4,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; export AI_CAMER
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/lib/runtime_env.sh"
 : "${AI_CAMERA_NODE1_IP:?}" "${AI_CAMERA_NODE2_IP:?}"
+mkdir -p "$REPO_ROOT/configs/runtime"
 envsubst < "$REPO_ROOT/docker/prometheus.yml" > "$REPO_ROOT/configs/runtime/prometheus.yml"
 echo "[OK] generated configs/runtime/prometheus.yml"

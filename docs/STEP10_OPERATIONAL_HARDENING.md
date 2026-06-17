@@ -72,3 +72,29 @@ Evidence JSONL/SQLite validation         PASS
 ## Commit boundary
 
 This milestone should be committed before adding object detection, model-serving, vector search, or agent orchestration. Step 10.2 is the reproducible deployment baseline.
+
+---
+
+## Later status through Step 13
+
+The Step 10.2 operational-hardening rules still apply. Step 13 adds these
+additional reproducibility checks and runtime artifacts:
+
+```bash
+./scripts/validate_step13_grafana_stack.sh
+./scripts/validate_step13_capture_session.sh
+```
+
+Do not commit generated Step 13 runtime outputs:
+
+```text
+configs/runtime/*.yml
+results/
+data/events/*.db*
+data/datasets/
+docker/configs/
+docker/docker/
+```
+
+The Docker Compose file is located under `docker/`, so its Prometheus and
+Grafana volume paths must remain relative to that directory.

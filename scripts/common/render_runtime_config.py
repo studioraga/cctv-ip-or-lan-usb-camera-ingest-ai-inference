@@ -38,7 +38,7 @@ def main() -> int:
     if not n1: raise SystemExit('ERROR: set AI_CAMERA_NODE1_IP on Node2, or provide it in deploy/ai-camera.env')
     if not n2: raise SystemExit('ERROR: set AI_CAMERA_NODE2_IP on Node1, or provide it in deploy/ai-camera.env')
     n1=require_ip('AI_CAMERA_NODE1_IP',n1); n2=require_ip('AI_CAMERA_NODE2_IP',n2)
-    rtp=int(os.getenv('AI_CAMERA_NODE1_RTP_PORT','5000')); n2port=int(os.getenv('AI_CAMERA_NODE2_API_PORT','8082'))
+    rtp=int(os.getenv('AI_CAMERA_NODE1_RTP_PORT','5000')); capture_port=int(os.getenv('AI_CAMERA_CAPTURE_UDP_PORT','5001')); n2port=int(os.getenv('AI_CAMERA_NODE2_API_PORT','8082'))
     camera=os.getenv('AI_CAMERA_CAMERA_ID','c922_node2_gate'); device=os.getenv('AI_CAMERA_DEVICE','/dev/video0')
     profiles=csv('AI_CAMERA_ALLOWED_PROFILES','mjpeg_480p30,mjpeg_720p30,mjpeg_720p60')
     devices=csv('AI_CAMERA_ALLOWED_DEVICES',device)
@@ -46,13 +46,15 @@ def main() -> int:
     policy={
       'version':2,'name':'generated_local_lan_camera_policy',
       'cameras':[{'camera_id':camera,'source_ip':n2,'node2_url':f'http://{n2}:{n2port}',
-                  'allowed_node1_ips':[n1],'allowed_ports':[rtp],'allowed_profiles':profiles,'allowed_devices':devices}],
-      'media':{'clip_root':os.getenv('AI_CAMERA_CLIP_ROOT','data/clips'),'keyframe_root':os.getenv('AI_CAMERA_KEYFRAME_ROOT','data/keyframes')},
+                  'allowed_node1_ips':[n1],'allowed_ports':sorted(set([rtp,capture_port])),'allowed_profiles':profiles,'allowed_devices':devices}],
+      'media':{'clip_root':os.getenv('AI_CAMERA_CLIP_ROOT','data/clips'),'keyframe_root':os.getenv('AI_CAMERA_KEYFRAME_ROOT','data/keyframes'),'dataset_root':os.getenv('AI_CAMERA_DATASET_ROOT','data/datasets')},
       'node2_control':{'trusted_client_ips':[n1,'127.0.0.1','::1']},
       'network_rules':[{'id':'allow_node2_camera_to_node1','source_ip':n2,'destination_ip':n1,'protocol':'udp','destination_port':rtp,'action':'allow'},
-                       {'id':'deny_untrusted_camera_sources','source_ip':'*','destination_ip':n1,'protocol':'udp','destination_port':rtp,'action':'deny'}],
+                       {'id':'allow_node2_capture_to_node1','source_ip':n2,'destination_ip':n1,'protocol':'udp','destination_port':capture_port,'action':'allow'},
+                       {'id':'deny_untrusted_camera_sources','source_ip':'*','destination_ip':n1,'protocol':'udp','destination_port':rtp,'action':'deny'},
+                       {'id':'deny_untrusted_capture_sources','source_ip':'*','destination_ip':n1,'protocol':'udp','destination_port':capture_port,'action':'deny'}],
       'observability':{'require_metrics':True,'require_jsonl_event_log':True,'require_tegrastats_on_node2':True}}
-    nodes={'node1':{'role':'receiver_ai_orchestrator','ip':n1,'udp_port':rtp,'api_port':int(os.getenv('AI_CAMERA_NODE1_API_PORT','8080')),'metrics_port':int(os.getenv('AI_CAMERA_NODE1_METRICS_PORT','9101'))},
+    nodes={'node1':{'role':'receiver_ai_orchestrator','ip':n1,'udp_port':rtp,'api_port':int(os.getenv('AI_CAMERA_NODE1_API_PORT','8080')),'metrics_port':int(os.getenv('AI_CAMERA_NODE1_METRICS_PORT','9101')),'capture_udp_port':capture_port},
            'node2':{'role':'camera_streamer','ip':n2,'api_port':n2port,'camera_device':device,'default_mode':os.getenv('AI_CAMERA_PROFILE','mjpeg_720p30'),'supported_modes':profiles},
            'network':{'transport':'UDP/RTP','rtp_caps':'application/x-rtp,media=video,clock-rate=90000,encoding-name=JPEG,payload=26','low_latency':True}}
     (runtime/'security_policy.yaml').write_text(yaml.safe_dump(policy,sort_keys=False))

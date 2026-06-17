@@ -1,109 +1,209 @@
-# CI/CD Validation Plan
+# CI/CD and validation plan
 
-This project has both normal software checks and hardware-in-the-loop checks. Hosted CI can validate syntax, imports, policy, migrations, and GStreamer command construction. Full stream validation requires Node1/Node2 hardware or self-hosted LAN runners.
+This project has both normal software checks and hardware-in-the-loop checks. Hosted CI can validate syntax, imports, policy, migrations, Docker/Grafana provisioning, and command construction. Full streaming and capture-session validation require Node1/Node2 hardware or self-hosted LAN runners.
 
 ## Layer 1 — static validation, no hardware
+
+Run from any checkout:
 
 ```bash
 ./scripts/ci/validate_static.sh
 ```
 
-Checks:
+Covers:
 
-- Python compile checks for agents and services.
-- YAML syntax for configs and policies.
-- Shell script syntax.
-- Node2 GStreamer command generation for every profile.
+- Python compile checks.
+- YAML syntax checks for base configs and policies.
+- Shell syntax checks.
+- Node2 GStreamer command generation smoke tests.
 - Query parser smoke test.
+- Step 13 validation script syntax.
 
-## Layer 2 — Node1 local runtime smoke
-
-Run on Node1 or a compatible x86 machine with apt OpenCV/GStreamer:
+## Layer 2 — unit and integration tests
 
 ```bash
 source .venv/bin/activate
+python3 -m pytest -q
+```
+
+Current expected result on Node1 after Step 13:
+
+```text
+27 passed, 4 FastAPI on_event deprecation warnings
+```
+
+The warnings are non-fatal. They indicate a future FastAPI lifespan migration task.
+
+## Layer 3 — Node1 runtime validation
+
+Run on Node1 only:
+
+```bash
 ./scripts/ci/validate_node1_runtime.sh
 ```
 
-Checks:
+Covers:
 
-- Python interpreter path.
-- `cv2` import.
-- `GStreamer: YES` in OpenCV build info. This is mandatory.
-- ONNX Runtime import if installed.
-- `httpx` and `httpx2` import.
-- SQLite/EventDB smoke operation.
-- Node1 API module import.
+- Node1 `.venv` exists and is active.
+- OpenCV imports from apt/system packages.
+- `cv2.getBuildInformation()` reports `GStreamer: YES`.
+- ONNX Runtime imports for Node1 inference-worker features.
+- API/capture dependencies import successfully.
 
-## Layer 3 — Node2 local runtime smoke
+Failure signature:
 
-Run on Node2 Jetson:
-
-```bash
-source .venv/bin/activate
-./scripts/ci/validate_node2_runtime.sh
+```text
+GStreamer: NO
 ```
 
-Checks:
-
-- Node2 dependency imports including `httpx` and `httpx2`.
-- `agents.node2.node2_streamer_controller` import.
-- Generated GStreamer commands for all profiles.
-- MJPEG profiles include `rtpjpegpay`.
-- YUYV raw profile includes `videoconvert`, `UYVY`, and `rtpvrawpay`.
-- Node2 FastAPI control app import.
-- Optional V4L2 camera probe.
-
-## Layer 4 — deployment preparation
-
-Run per node:
+Fix:
 
 ```bash
-set -a; source deploy/ai-camera.env; set +a
-export AI_CAMERA_REPO_ROOT="$PWD"
-./scripts/common/prepare_deployment.sh node1
-./scripts/common/prepare_deployment.sh node2
+RECREATE_VENV=1 ./scripts/node1/setup_node1_venv.sh
 ```
 
-Expected: rendered runtime configs, policy validation, and pytest success.
+## Layer 4 — Node2 runtime validation
 
-## Layer 5 — hardware-in-the-loop Step 9 streaming validation
+Run on Node2 only:
 
-Run from Node1 after both systemd services are installed and active:
+```bash
+PYTHONNOUSERSITE=1 ./scripts/ci/validate_node2_runtime.sh
+```
+
+Covers:
+
+- User-site packages are disabled.
+- FastAPI/Pydantic/Prometheus/httpx/httpx2 dependencies import cleanly.
+- Node2 GStreamer command builder works.
+- Node2 runtime remains isolated from Node1 OpenCV/ONNX dependencies.
+
+YOLO tests are Node1 inference tests and should skip cleanly on Node2 if optional inference dependencies are absent.
+
+## Layer 5 — reproducible deployment preparation
+
+```bash
+RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node1
+RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node2
+```
+
+Covers:
+
+- Runtime config rendering.
+- Policy validation.
+- SQLite migrations.
+- Systemd unit rendering.
+- Path portability under the current checkout root.
+
+## Layer 6 — hardware streaming validation
+
+Production RTP validation from Node1:
 
 ```bash
 ./scripts/validate_step9_streaming.sh
 ```
 
-Checks:
-
-1. Node1 `/health`.
-2. Node2 `/health`.
-3. Node2 `/stream/start` from trusted Node1.
-4. Node2 `/stream/status` remains `running: true`.
-5. Node1 receiver metrics show FPS and increasing `ai_camera_frames_total`.
-6. Node2 `/stream/stop` returns `running: false`.
-
-The script writes a timestamped log under `results/step9/`.
-
-## Known failure signatures that CI should catch or document
-
-| Failure | Meaning | Fix |
-|---|---|---|
-| `GStreamer: NO` in Node1 `.venv` | PyPI/OpenCV wheel shadowed apt OpenCV | Recreate venv with `--system-site-packages`; do not install `opencv-python` |
-| `ModuleNotFoundError: services` in receiver | Receiver launched as direct script | Launch with `python -m agents.node1.node1_receiver_agent` |
-| `/stream/status` returns `403` from Node2 itself | Caller not in Node2 trusted control list | Query status from Node1 or add explicit policy entry if desired |
-| `Device '/dev/video0' is busy` | Manual sender or stale gst process owns camera | Stop previous sender before API start |
-| `streamer exited rc=1` | GStreamer command failed after API start | Check Node2 journal and camera ownership |
-
-## Layer 6 — Step 10 reproducibility gate
+Receiver-side bounded-slices validation from Node1:
 
 ```bash
-SOURCE_HYGIENE=1 ./scripts/validate_step10_reproducible_deployment.sh all
-RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node1
-RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node2
-RUN_STREAM=1 ./scripts/validate_step10_reproducible_deployment.sh node1
+./scripts/validate_step11_latency_monitoring.sh
 ```
 
-This gate combines source hygiene, static checks, runtime checks, deployment preparation, service health, and optional API-controlled streaming validation.
+Timestamped E2E validation from Node1:
 
+```bash
+./scripts/validate_step12_e2e_latency.sh
+```
+
+Step 12 temporarily stops the production Node1 receiver so it can bind UDP `5000` and metrics `9101`, then restarts it.
+
+## Layer 7 — YOLO ONNX validation
+
+```bash
+./scripts/validate_step12_yolo_onnx.sh
+```
+
+This always runs synthetic postprocess tests on Node1. If a real model exists:
+
+```bash
+export AI_CAMERA_YOLO_MODEL=models/object_detection/your_model.onnx
+./scripts/validate_step12_yolo_onnx.sh
+```
+
+## Layer 8 — Grafana/Prometheus provisioning validation
+
+```bash
+./scripts/validate_step13_grafana_stack.sh
+```
+
+Covers:
+
+- Renders `configs/runtime/prometheus.yml`.
+- Validates generated Prometheus YAML.
+- Validates Grafana datasource provisioning YAML.
+- Validates Grafana dashboard provider YAML.
+- Validates dashboard JSON.
+- Runs `docker compose config`.
+
+The runtime compose paths must account for the compose file location under `docker/`:
+
+```yaml
+../configs/runtime/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+./grafana/provisioning:/etc/grafana/provisioning:ro
+./grafana/dashboards:/var/lib/grafana/dashboards:ro
+```
+
+## Layer 9 — Step 13 capture-session hardware validation
+
+Run from trusted Node1:
+
+```bash
+./scripts/validate_step13_capture_session.sh
+```
+
+Covers:
+
+- Node1 API health.
+- Node2 control health.
+- POST `/capture/sessions`.
+- Capture status polling.
+- Dataset directory creation.
+- Source JPEG frame count.
+- `manifest.json`, `metadata/frames.jsonl`, `metrics_summary.json`, `report.md`, optional `preview.mp4`.
+- Prometheus capture metrics on Node1 API.
+- Node2 stream stop after capture.
+
+Expected pass:
+
+```text
+[OK] Step 13 capture-session dataset validation completed
+```
+
+## Layer 10 — source hygiene before commit
+
+Run before creating a source archive or pushing:
+
+```bash
+git status --short
+git diff --cached --stat
+```
+
+Do not stage runtime/generated paths:
+
+```text
+.venv/
+configs/runtime/*.yml
+results/
+data/events/*.db*
+data/datasets/
+docker/configs/
+docker/docker/
+__pycache__/
+```
+
+## Known non-fatal warnings
+
+| Warning | Meaning | Follow-up |
+|---|---|---|
+| FastAPI `on_event` deprecation | Startup hook works but should move to lifespan API later | Future cleanup |
+| Node2 local `/stream/status` 403 | Node2 is not a trusted control client by default | Query from Node1 or explicitly add Node2 to allow-list |
+| Step 13 histogram count exceeds latest frames gauge | Histogram is cumulative for API process lifetime | Normal Prometheus behavior |

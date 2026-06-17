@@ -2,39 +2,54 @@
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
 # Virtual environments
 .venv/
+.venv.backup-*/
 venv/
 env/
 
-# Runtime outputs
-results/**/*.jsonl
-results/**/*.log
-results/**/*.txt
+# Runtime/generated configs
+configs/runtime/*.yml
+configs/runtime/*.yaml
+!configs/runtime/.gitkeep
+
+# Runtime logs and validation outputs
+results/
 *.log
 
-# Camera/event generated artifacts
-data/events/*.db
-data/events/*.sqlite
-data/events/*.sqlite3
-data/keyframes/*.jpg
-data/keyframes/*.jpeg
-data/keyframes/*.png
-data/clips/**/*.mp4
-data/clips/**/*.mkv
-data/clips/**/*.avi
+# SQLite/runtime DB artifacts
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/events/*.db*
 
-# Large model/media artifacts
-*.onnx
-*.engine
-*.plan
+# Runtime media/evidence/datasets
+data/clips/
+data/keyframes/
+data/datasets/
 *.mp4
 *.mkv
 *.mjpg
+*.avi
+*.jpg
+*.jpeg
+*.png
+
+# Large model/runtime artifacts
+*.onnx
+*.engine
+*.plan
+
+# Docker accidental bind-mount directories created by wrong relative paths
+docker/configs/
+docker/docker/
 
 # Build artifacts
 build/
@@ -49,69 +64,9 @@ cpp/**/build/
 
 # Local backup files
 *.bak
+*.back
 *.backup
+*.backup-*
 *.before_*
 *_patched.py
 *_patched_v2.py
-
-# Python runtime/cache artifacts
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-
-# Local virtual environments
-.venv/
-.venv.backup-*/
-
-# Runtime benchmark/output artifacts
-results/**/*.jsonl
-results/**/*.log
-results/**/*.txt
-*.db
-*.db-wal
-*.db-shm
-
-# Media/runtime evidence artifacts
-data/clips/
-data/keyframes/
-*.mp4
-*.jpg
-*.jpeg
-*.png
-
-# Local backup files
-*.bak
-*.back
-*.backup-*
-
-# Python runtime/cache artifacts
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-
-# Local virtual environments
-.venv/
-.venv.backup-*/
-
-# Runtime benchmark/output artifacts
-results/**/*.jsonl
-results/**/*.log
-results/**/*.txt
-*.db
-*.db-wal
-*.db-shm
-
-# Media/runtime evidence artifacts
-data/clips/
-data/keyframes/
-*.mp4
-*.jpg
-*.jpeg
-*.png
-
-# Local backup files
-*.bak
-*.back
-*.backup-*

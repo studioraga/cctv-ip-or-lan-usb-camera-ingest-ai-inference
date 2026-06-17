@@ -132,3 +132,21 @@ Generated evidence files are runtime artifacts and should not be committed unles
 | Node2 API stream exits rc=1 | Camera busy or bad GStreamer negotiation | Stop manual sender; check Node2 journal |
 | `403` on `/stream/status` from Node2 | Node2 not trusted as control client | Query from Node1 or update policy intentionally |
 | Clip/keyframe request path rejected | Path containment enforcement working | Use clip/event IDs through API |
+
+---
+
+## Later migration status through Step 13
+
+Step 1 introduced the migration/policy/security foundation. Later milestones now
+include:
+
+```text
+001_initial.sql
+002_step1_security.sql
+003_capture_sessions.sql
+```
+
+`003_capture_sessions.sql` adds capture-session and capture-artifact metadata
+for the Grafana-triggered dataset workflow. The same policy model now protects
+both the production RTP target on UDP `5000` and the capture-session target on
+UDP `5001`.

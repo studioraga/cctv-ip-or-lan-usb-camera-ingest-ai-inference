@@ -1,15 +1,20 @@
 # Architecture: local Node1/Node2 CCTV AI camera platform
 
-This repository implements a local-first CCTV/IP-or-LAN USB camera ingest and AI evidence pipeline. The validated deployment uses a Logitech C922 USB camera on Node2 Jetson Orin Nano and streams RTP/JPEG over the LAN to Node1, where frames are decoded, measured, indexed, and converted into motion-event evidence.
+This repository implements a local-first CCTV/IP-or-LAN USB camera ingest, evidence, and dataset-capture platform. The validated deployment uses a Logitech C922 USB camera on Node2 Jetson Orin Nano and streams to Node1, where frames are decoded, measured, indexed, stored, and exposed through FastAPI, Prometheus, and Grafana.
+
+The architecture now has two validated frame paths:
+
+1. **Production RTP path**: Node2 GStreamer RTP/JPEG to Node1 UDP `5000`, decoded by OpenCV/GStreamer for live receiver metrics and motion evidence.
+2. **Step 13 dataset path**: Node2 timestamped JPEG/UDP to Node1 UDP `5001`, stored as source-JPEG datasets with per-frame metadata and capture-session artifacts.
 
 ## Validated nodes
 
 | Node | Validated host/IP | Responsibility | Services |
 |---|---|---|---|
-| Node1 | `sr-kaaldev` / `192.168.29.20` | API gateway, RTP receiver, GStreamer/OpenCV decode, SQLite event DB, JSONL event log, keyframes, clips, receiver metrics | `node1-ai-camera-api.service`, `node1-ai-camera-receiver.service` |
-| Node2 | `shiva-vaisesika` / `192.168.29.188` | Jetson camera control plane, V4L2 camera ownership, GStreamer RTP sender, stream lifecycle API | `node2-camera-control-agent.service` |
+| Node1 | `sr-kaaldev` / `192.168.29.20` | API gateway, RTP receiver, timestamped capture-session orchestrator, SQLite event/capture DB, JSONL event log, datasets, keyframes, clips, Prometheus/Grafana/Qdrant stack | `node1-ai-camera-api.service`, `node1-ai-camera-receiver.service`, Docker Prometheus/Grafana/Qdrant |
+| Node2 | `shiva-vaisesika` / `192.168.29.188` | Jetson camera control plane, V4L2 camera ownership, GStreamer RTP sender, timestamped JPEG sender, stream lifecycle API | `node2-camera-control-agent.service` |
 
-## Data plane
+## Data plane A — production RTP receiver
 
 ```text
 Logitech C922 on Node2 /dev/video0
@@ -47,6 +52,25 @@ udpsrc port=5000 buffer-size=8388608
   ! appsink drop=true sync=false max-buffers=1 wait-on-eos=false emit-signals=false
 ```
 
+## Data plane B — timestamped dataset capture
+
+```text
+Grafana dashboard or Node1 /ui/capture
+  -> Node1 POST /capture/sessions
+  -> Node1 validates camera/profile/device/port against policy
+  -> Node1 starts dataset receiver on UDP 5001
+  -> Node1 calls Node2 /stream/start with transport=timed_jpeg_udp
+  -> Node2 userspace timed sender reads source JPEG frames from /dev/video0
+  -> Node2 fragments each JPEG and attaches frame_id, sender_wall_ns, sender_monotonic_ns
+  -> Node1 reassembles source JPEG frames
+  -> Node1 writes data/datasets/{session_id}/frames/*.jpg
+  -> Node1 writes metadata/frames.jsonl and capture_events.jsonl
+  -> Node1 writes manifest.json, metrics_summary.json, report.md, optional preview.mp4
+  -> Node1 calls Node2 /stream/stop after duration or cancellation
+```
+
+The capture path uses source JPEG bytes, not expanded BGR dumps. This keeps long-running datasets smaller while preserving the original camera payload for offline analysis.
+
 ## Control plane
 
 Node1 is the trusted controller. Node2 exposes a FastAPI control service on `192.168.29.188:8082`. Policy allows Node1 to call control endpoints and denies untrusted clients. This is why `/health` works locally on Node2, but `/stream/status` can return `403` when called from Node2 itself if Node2 is not in the trusted control-client allow-list.
@@ -64,42 +88,76 @@ POST /stream/switch-profile
 GET  /metrics
 ```
 
-Validated API start payload from Node1:
+Node1 API endpoints now include production control, event/media access, query, capture sessions, and capture UI:
 
-```json
-{
-  "camera_id": "c922_node2_gate",
-  "node1_ip": "192.168.29.20",
-  "port": 5000,
-  "device": "/dev/video0",
-  "profile": "mjpeg_720p30"
-}
+```text
+GET  /health
+GET  /cameras
+GET  /node2/status
+POST /cameras/{camera_id}/start
+POST /cameras/{camera_id}/stop
+POST /cameras/{camera_id}/profile
+GET  /events
+GET  /clips
+POST /query
+POST /capture/sessions
+GET  /capture/sessions
+GET  /capture/sessions/{session_id}
+POST /capture/sessions/{session_id}/stop
+GET  /capture/sessions/{session_id}/artifacts
+GET  /datasets/{session_id}/manifest
+GET  /datasets/{session_id}/report
+GET  /ui/capture
+GET  /metrics
 ```
 
 ## Observability plane
 
-Node1 receiver exposes Prometheus metrics on `:9101/metrics`. The Step 9 validation showed `ai_camera_receiver_fps` around 14.9-15.1 FPS and `ai_camera_frames_total` increasing continuously during API-controlled streaming.
+Node1 receiver exposes production receiver metrics on `:9101/metrics`, including frame counts, FPS, decode failures, Step 11 bounded-slices latency metrics, and Step 12 E2E metrics when timed transport is active.
 
-Node1 also writes local evidence:
+Node1 API exposes API/capture metrics on `:8080/metrics`, including:
 
 ```text
-results/node1/events.jsonl
-data/events/ai_camera.db
-data/keyframes/*.jpg
-data/clips/c922_node2_gate/YYYY-MM-DD/*.mp4
+ai_camera_api_requests_total
+ai_camera_api_errors_total
+ai_camera_capture_session_active
+ai_camera_capture_sessions_total
+ai_camera_capture_session_elapsed_seconds
+ai_camera_capture_session_frames_total
+ai_camera_capture_session_bytes_written_total
+ai_camera_capture_session_dropped_frames_total
+ai_camera_capture_session_e2e_latency_ms
+ai_camera_capture_session_write_latency_ms
+ai_camera_capture_session_disk_free_bytes
+ai_camera_capture_session_errors_total
 ```
+
+Prometheus and Grafana run from `docker/docker-compose.node1.yml` using host networking. Prometheus config is rendered to `configs/runtime/prometheus.yml`, and Grafana provisions the **AI Camera Capture Session Demo** dashboard from `docker/grafana/dashboards/ai-camera-capture-session.json`.
 
 ## Persistence and evidence plane
 
-The event DB is migration-managed by `migrations/` and accessed through `services/common/event_db.py`. Motion events are written with `event_id`, `camera_id`, `event_type`, timestamp, confidence, clip ID/path, keyframe path, label, severity, and attributes such as `motion_score`.
+The event DB is migration-managed by `migrations/` and accessed through `services/common/event_db.py`.
+
+Current persistence layers:
+
+```text
+data/events/ai_camera.db                       # SQLite events, clips, capture sessions, artifacts
+results/node1/events.jsonl                     # receiver JSONL events
+data/keyframes/                                # motion keyframes
+data/clips/                                    # motion clips
+data/datasets/{session_id}/                    # Step 13 source-JPEG datasets
+```
+
+Step 13 adds `capture_sessions` and `capture_artifacts` through `migrations/003_capture_sessions.sql`.
 
 ## Security plane
 
 The security model is fail-closed and policy-driven:
 
 - Node2 stream-control endpoints require a trusted Node1 control IP.
-- Node2 validates stream profile, target Node1 IP/port, camera ID, and device path before launching GStreamer.
-- Node1 media access is identifier-based; callers should request media by database IDs, not arbitrary filesystem paths.
+- Node2 validates stream profile, target Node1 IP/port, camera ID, device path, and transport.
+- Node1 capture sessions validate duration, device, profile, transport, and capture UDP target.
+- Node1 media and dataset artifact access is identifier-based; callers should request artifacts by database/session IDs, not arbitrary filesystem paths.
 - Systemd units use `NoNewPrivileges=true`, restrictive `ReadWritePaths`, and explicit device access on Node2.
 
 ## Runtime dependency rule

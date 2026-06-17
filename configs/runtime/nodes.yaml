@@ -4,6 +4,7 @@ node1:
   udp_port: 5000
   api_port: 8080
   metrics_port: 9101
+  capture_udp_port: 5001
 node2:
   role: camera_streamer
   ip: 192.168.29.188

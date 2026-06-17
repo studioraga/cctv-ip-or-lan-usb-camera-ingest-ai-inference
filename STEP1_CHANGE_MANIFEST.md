@@ -47,3 +47,11 @@
 - Files /mnt/data/original_step1_compare/cctv-ip-or-lan-usb-camera-ingest-ai-inference/systemd/node1-ai-camera-receiver.service and ./systemd/node1-ai-camera-receiver.service differ
 - Files /mnt/data/original_step1_compare/cctv-ip-or-lan-usb-camera-ingest-ai-inference/systemd/node2-camera-control-agent.service and ./systemd/node2-camera-control-agent.service differ
 - Only in .: tests
+
+---
+
+## Later Step 13 note
+
+The Step 1 migration and policy framework now also supports Step 13 capture
+sessions through `migrations/003_capture_sessions.sql`, dataset artifact access,
+and policy allow-listing of the dedicated capture UDP port `5001`.

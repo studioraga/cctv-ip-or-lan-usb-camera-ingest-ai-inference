@@ -11,6 +11,9 @@ python3 -m py_compile \
   services/common/bounded_slices.py \
   services/common/event_db.py \
   services/common/policy.py \
+  services/common/timed_frame_protocol.py \
+  services/node1_capture_orchestrator/dataset_writer.py \
+  services/node1_capture_orchestrator/session_manager.py \
   services/node1_api_gateway/app.py \
   services/node1_api_gateway/schemas.py \
   services/node1_query_engine/nl_parser.py \

@@ -133,7 +133,7 @@ class SecurityPolicy:
 
     def media_root(self, media_type: str) -> Path:
         media = self.data.get("media", {})
-        key = {"clip": "clip_root", "keyframe": "keyframe_root"}.get(media_type)
+        key = {"clip": "clip_root", "keyframe": "keyframe_root", "dataset": "dataset_root"}.get(media_type)
         if key is None:
             raise PolicyError(f"Unknown media type: {media_type}")
         value = media.get(key)

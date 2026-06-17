@@ -80,3 +80,56 @@ Harden reproducible Node1/Node2 CCTV deployment validation
 - `docs/STEP10_OPERATIONAL_HARDENING.md`
 
 - `scripts/validate_step10_reproducible_deployment.sh`
+
+---
+
+# Suggested Git commit message for Step 13 Grafana capture-session milestone
+
+```text
+Add Grafana capture sessions and dataset artifacts
+
+Implement Step 13 for the local AI camera demo.
+
+This adds a Grafana-visible, Node1 API-driven bounded capture-session workflow
+that uses the Step 12 timestamped JPEG/UDP transport to capture source JPEG
+frames from Node2 and store them as Node1 datasets for later analysis.
+
+Functional features now working:
+- Node1 `/ui/capture` form for demo-triggered captures.
+- Node1 `/capture/sessions` API with duration enforcement up to 7200 seconds.
+- Node1 capture-session orchestration that starts/stops Node2 automatically.
+- Dedicated capture UDP port `AI_CAMERA_CAPTURE_UDP_PORT=5001` separate from
+  the production RTP receiver on UDP 5000.
+- Node2 `timed_jpeg_udp` capture path carrying `frame_id`, `sender_wall_ns`,
+  and `sender_monotonic_ns` metadata.
+- Source-JPEG dataset writer under `data/datasets/{session_id}/frames`.
+- Per-frame `metadata/frames.jsonl` with timestamps, E2E latency, JPEG size,
+  fragment count, SHA-256, and write latency.
+- Dataset artifacts: `manifest.json`, `metrics_summary.json`, `report.md`,
+  and best-effort `preview.mp4`.
+- SQLite migration `003_capture_sessions.sql` for capture sessions and artifacts.
+- Prometheus metrics for capture active state, frames, bytes, dropped frames,
+  E2E latency, write latency, disk free, and errors.
+- Grafana/Prometheus Docker stack with provisioned Prometheus datasource and
+  `AI Camera Capture Session Demo` dashboard.
+- Correct Docker Compose relative mounts for rendered Prometheus config and
+  Grafana provisioning/dashboard files.
+- Validation scripts for Grafana stack provisioning and live capture-session
+  dataset generation.
+
+Validated in the Node1/Node2 LAN lab:
+- Node1 static validation passed.
+- Node1 pytest passed with 27 tests.
+- Grafana stack validation passed.
+- Grafana dashboard appears under `AI Camera / AI Camera Capture Session Demo`.
+- UI-triggered 30-second capture completed with 437 source JPEG frames,
+  87,274,343 bytes, zero dropped frames, avg E2E latency around 18.19 ms,
+  and generated report/preview artifacts.
+- Automated Step 13 capture validation completed with Node2 stopped cleanly.
+
+Notes:
+- Production receiver remains `AI_CAMERA_TRANSPORT=rtp` on UDP 5000.
+- Step 13 capture sessions use `transport=timed_jpeg_udp` on UDP 5001.
+- Runtime datasets, DB files, generated configs, and validation results should
+  not be committed.
+```

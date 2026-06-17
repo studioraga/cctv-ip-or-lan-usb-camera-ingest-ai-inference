@@ -75,3 +75,14 @@ AI_CAMERA_NODE2_USER=srrmk AI_CAMERA_NODE2_IP=192.168.29.188 \
 ```
 
 The sync excludes `.venv`, `.venv.backup-*`, `__pycache__`, pyc files, results, SQLite DB/WAL/SHM files, clips, and generated keyframes.
+
+---
+
+## Later status through Step 13
+
+The Node1/Node2 virtual-environment rules are unchanged by the Grafana demo:
+
+- Node1 still requires `--system-site-packages` so OpenCV reports `GStreamer: YES`.
+- Node2 remains isolated with `PYTHONNOUSERSITE=1`.
+- Grafana, Prometheus, and Qdrant run in Docker and do not add Python package requirements.
+- Step 13 capture-session code runs inside the Node1 API process and uses the existing Node1 venv.

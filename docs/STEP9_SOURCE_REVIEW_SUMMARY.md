@@ -36,3 +36,17 @@ Node1 receives ~15 FPS, frames_total increases, and motion evidence is stored
 - SQLite DB/WAL/SHM files
 - generated MP4 clips
 - generated JPG keyframes
+
+---
+
+## Later status through Step 13
+
+The Step 9 API-controlled RTP stream remains the production stream baseline.
+Later milestones added:
+
+- Step 11 bounded-slices latency monitoring on the production receiver.
+- Step 12 timestamped JPEG/UDP E2E latency and YOLO ONNX postprocessing.
+- Step 13 Grafana-triggered capture sessions and source-JPEG dataset artifacts.
+
+Production streaming still uses UDP `5000` and `transport=rtp`. Dataset capture
+uses UDP `5001` and `transport=timed_jpeg_udp`.

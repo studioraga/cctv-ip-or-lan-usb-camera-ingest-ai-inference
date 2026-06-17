@@ -40,5 +40,5 @@ def test_migrations_are_idempotent_and_media_lookup_uses_ids(tmp_path: Path):
     # A second open verifies migration idempotence and hash history.
     db2 = EventDB(str(db_path), str(migrations))
     versions = db2.conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
-    assert [row[0] for row in versions] == [1, 2]
+    assert [row[0] for row in versions] == [1, 2, 3]
     db2.close()

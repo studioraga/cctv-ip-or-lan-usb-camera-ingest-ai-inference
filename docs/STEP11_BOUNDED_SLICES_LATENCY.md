@@ -143,14 +143,17 @@ ai_camera_latency_bounded_slice_count appears
 Node2 stream stops cleanly
 ```
 
-## Next improvement
+## Follow-up implemented in Step 12 and Step 13
 
-For true end-to-end latency, add a sender timestamp and frame ID on Node2 and
-carry it to Node1. Then compute:
+Step 11 intentionally measured Node1-local receiver timing only. That limitation
+was addressed in later milestones:
 
-```text
-Node1_receive_monotonic_ns - Node2_send_monotonic_ns
-```
+1. **Step 12** adds `timed_jpeg_udp`, where Node2 attaches `frame_id`,
+   `sender_wall_ns`, and `sender_monotonic_ns` to each source JPEG frame.
+   Node1 can then compute sender-to-Node1 receive/decode latency and export
+   `latency_kind="e2e_latency_ms"` through the same bounded-slices monitor.
+2. **Step 13** reuses the same timestamped transport for bounded capture
+   sessions and source-JPEG datasets under `data/datasets/{session_id}/`.
 
-This requires robust clock-sync validation or same-clock timestamp transport
-semantics. Until then, Step 11 reports receiver-side stability only.
+Step 11 remains the production RTP receiver-side stability monitor. Step 12/13
+provide opt-in sender-correlated E2E measurement and dataset capture.

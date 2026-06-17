@@ -122,6 +122,28 @@ export AI_CAMERA_YOLO_MODEL=models/object_detection/your_model.onnx
 
 The script will load the model and run a smoke inference on a blank frame.
 
+
+## Step 13 reuse of the timestamped transport
+
+Step 13 reuses `timed_jpeg_udp` for bounded dataset capture sessions. The
+production receiver remains `transport=rtp` on UDP `5000`, while capture
+sessions use a separate capture UDP port, default `5001`, so Node1 can save
+source JPEG frames and per-frame timestamp metadata without stopping the
+production RTP receiver.
+
+The Step 13 capture path writes:
+
+```text
+data/datasets/{session_id}/frames/*.jpg
+data/datasets/{session_id}/metadata/frames.jsonl
+data/datasets/{session_id}/manifest.json
+data/datasets/{session_id}/artifacts/metrics_summary.json
+data/datasets/{session_id}/artifacts/report.md
+data/datasets/{session_id}/artifacts/preview.mp4  # best effort
+```
+
+See `docs/STEP13_GRAFANA_CAPTURE_DATASET.md` for the Grafana/Prometheus demo.
+
 ## Important limitations that remain
 
 The timestamp is assigned when Node2 userspace sender extracts/sends the JPEG frame, not at the exact camera sensor exposure time. True sensor exposure timestamping would require V4L2 buffer timestamp extraction and carrying that exact timestamp in metadata. The current implementation is a practical Node2 sender-to-Node1 decode E2E measurement.
