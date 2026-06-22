@@ -4,7 +4,7 @@ This document records the Node1-only validation and the later Step 9 receiver ro
 
 ## Step 7 validated items
 
-- `deploy/ai-camera.env` can point the repository to `$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference`.
+- `deploy/ai-camera.env` can point the repository to `$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference`.
 - `scripts/common/detect_environment.py --json` detects Node1 IP, Python, GPU/system information, and required tools.
 - `scripts/common/prepare_deployment.sh node1` renders runtime policy and node configuration.
 - `configs/runtime/security_policy.yaml` validates as policy version 2.

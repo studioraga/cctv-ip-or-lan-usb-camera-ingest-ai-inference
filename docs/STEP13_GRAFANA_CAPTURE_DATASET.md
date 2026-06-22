@@ -163,10 +163,23 @@ docker/grafana/provisioning/dashboards/ai-camera.yml
 docker/grafana/dashboards/ai-camera-capture-session.json
 ```
 
-Bring up the local stack from Node1:
+Recommended bring-up from Node1:
+
+```bash
+./scripts/startup/node1_startup_step13.sh
+```
+
+To include a live bounded capture-session test:
+
+```bash
+./scripts/startup/node1_startup_step13.sh --capture-test
+```
+
+Manual bring-up is also supported:
 
 ```bash
 ./scripts/common/render_prometheus_config.sh
+./scripts/validate_step13_grafana_stack.sh
 docker compose -f docker/docker-compose.node1.yml up -d
 ```
 
@@ -177,6 +190,11 @@ Because the compose file is inside `docker/`, these relative mounts are required
 ./grafana/provisioning:/etc/grafana/provisioning:ro
 ./grafana/dashboards:/var/lib/grafana/dashboards:ro
 ```
+
+If Prometheus fails with `not a directory: Are you trying to mount a directory onto a file`,
+`configs/runtime/prometheus.yml` was missing or had been created as a directory
+by an earlier Compose run. Run `./scripts/common/render_prometheus_config.sh`
+again; it removes that stale generated-directory path and writes the expected file.
 
 If Prometheus tries to mount `docker/configs/runtime/prometheus.yml`, the
 Prometheus volume path is wrong. If Grafana is healthy but the dashboard is

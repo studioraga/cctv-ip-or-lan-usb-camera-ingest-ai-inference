@@ -113,14 +113,20 @@ Run:
 ./scripts/validate_step12_yolo_onnx.sh
 ```
 
-This always runs synthetic post-processing unit tests. If a real model is available, set:
+This always runs synthetic post-processing unit tests. For the real-model smoke path, download the default model first:
 
 ```bash
-export AI_CAMERA_YOLO_MODEL=models/object_detection/your_model.onnx
+./scripts/models/download_yolo_onnx.sh
 ./scripts/validate_step12_yolo_onnx.sh
 ```
 
-The script will load the model and run a smoke inference on a blank frame.
+The default fixed path is:
+
+```text
+AI_CAMERA_YOLO_MODEL=models/object_detection/yolo11n.onnx
+```
+
+You can override it with your own ONNX model in `deploy/ai-camera.env`. The script loads the model and runs a smoke inference on a blank frame when the file exists.
 
 
 ## Step 13 reuse of the timestamped transport

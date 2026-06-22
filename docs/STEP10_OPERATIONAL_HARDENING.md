@@ -22,7 +22,7 @@ SOURCE_HYGIENE=1 ./scripts/validate_step10_reproducible_deployment.sh all
 Run Node1 validation on Node1:
 
 ```bash
-cd "$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
+cd "$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
 source .venv/bin/activate
 RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node1
 ```
@@ -30,7 +30,7 @@ RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node1
 Run Node2 validation on Node2:
 
 ```bash
-cd "$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
+cd "$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
 source .venv/bin/activate
 RUN_PREPARE=1 ./scripts/validate_step10_reproducible_deployment.sh node2
 ```

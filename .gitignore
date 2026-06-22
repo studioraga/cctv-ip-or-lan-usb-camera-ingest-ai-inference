@@ -13,6 +13,9 @@ __pycache__/
 venv/
 env/
 
+# Node-local deployment environment
+deploy/ai-camera.env
+
 # Runtime/generated configs
 configs/runtime/*.yml
 configs/runtime/*.yaml

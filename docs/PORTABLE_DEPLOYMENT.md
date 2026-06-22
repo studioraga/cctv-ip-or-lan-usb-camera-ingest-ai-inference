@@ -3,7 +3,7 @@
 The repository may be unpacked under any user account. The recommended location is:
 
 ```bash
-export AI_CAMERA_REPO_ROOT="$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
+export AI_CAMERA_REPO_ROOT="$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
 ```
 
 Generated systemd units and runtime configs are rendered from `deploy/ai-camera.env` and should not contain stale hard-coded paths from another machine.
@@ -11,9 +11,9 @@ Generated systemd units and runtime configs are rendered from `deploy/ai-camera.
 ## 1. Configure Node1
 
 ```bash
-mkdir -p "$HOME/dev/pub/mig1"
-tar -xzf cctv-ip-or-lan-usb-camera-ingest-ai-inference.tar.gz -C "$HOME/dev/pub/mig1"
-cd "$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
+mkdir -p "$HOME/dev/pub/ai-sys1"
+tar -xzf cctv-ip-or-lan-usb-camera-ingest-ai-inference.tar.gz -C "$HOME/dev/pub/ai-sys1"
+cd "$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
 cp deploy/ai-camera.env.example deploy/ai-camera.env
 ```
 
@@ -63,7 +63,8 @@ export AI_CAMERA_REPO_ROOT="$PWD"
 sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_CAPTURE_UDP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_TRANSPORT,AI_CAMERA_DATASET_ROOT,AI_CAMERA_CAPTURE_MAX_DURATION_SEC,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG,AI_CAMERA_LATENCY_THRESHOLD_MS,AI_CAMERA_LATENCY_WINDOW_SAMPLES \
   "$PWD/.venv/bin/python" scripts/common/install_systemd_units.py --role node1
 sudo systemctl daemon-reload
-sudo systemctl enable --now node1-ai-camera-api.service node1-ai-camera-receiver.service
+sudo systemctl enable node1-ai-camera-api.service node1-ai-camera-receiver.service
+sudo systemctl restart node1-ai-camera-api.service node1-ai-camera-receiver.service
 ```
 
 Validate Node1:
@@ -79,7 +80,7 @@ sudo ss -lunp | grep ":${AI_CAMERA_NODE1_RTP_PORT}"
 Sync or unpack the same source tree on Node2. Do not sync `.venv` from Node1.
 
 ```bash
-cd "$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
+cd "$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
 cp deploy/ai-camera.env.example deploy/ai-camera.env
 ```
 
@@ -118,7 +119,8 @@ export AI_CAMERA_REPO_ROOT="$PWD"
 sudo --preserve-env=AI_CAMERA_REPO_ROOT,AI_CAMERA_NODE1_IP,AI_CAMERA_NODE2_IP,AI_CAMERA_NODE1_API_PORT,AI_CAMERA_NODE1_RTP_PORT,AI_CAMERA_CAPTURE_UDP_PORT,AI_CAMERA_NODE1_METRICS_PORT,AI_CAMERA_NODE2_API_PORT,AI_CAMERA_VENV_DIR,AI_CAMERA_POLICY,AI_CAMERA_DB,AI_CAMERA_MIGRATIONS,AI_CAMERA_PROFILE,AI_CAMERA_CAMERA_ID,AI_CAMERA_DEVICE,AI_CAMERA_EVENT_LOG,PYTHONNOUSERSITE \
   "$PWD/.venv/bin/python" scripts/common/install_systemd_units.py --role node2
 sudo systemctl daemon-reload
-sudo systemctl enable --now node2-camera-control-agent.service
+sudo systemctl enable node2-camera-control-agent.service
+sudo systemctl restart node2-camera-control-agent.service
 ```
 
 Validate Node2 from Node1:

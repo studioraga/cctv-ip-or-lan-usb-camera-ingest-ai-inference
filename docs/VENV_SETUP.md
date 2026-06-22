@@ -27,7 +27,7 @@ Do not install `opencv-python` or `opencv-contrib-python` into Node1 `.venv`.
 ## Node1 setup
 
 ```bash
-cd "$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
+cd "$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
 
 # Recreate if an existing venv reports GStreamer: NO.
 RECREATE_VENV=1 ./scripts/node1/setup_node1_venv.sh
@@ -53,7 +53,7 @@ GStreamer: YES
 Node2 controls the C922/V4L2/GStreamer sender. Streaming is performed by GStreamer, but the control API requires FastAPI/Pydantic/Prometheus plus `httpx` and `httpx2` for test compatibility.
 
 ```bash
-cd "$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
+cd "$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
 RECREATE_VENV=1 ./scripts/node2/setup_node2_venv.sh
 source .venv/bin/activate
 python -m agents.node2.node2_streamer_controller --help
@@ -69,7 +69,7 @@ python -m agents.node2.node2_streamer_controller --help
 From Node1/control machine:
 
 ```bash
-cd "$HOME/dev/pub/mig1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
+cd "$HOME/dev/pub/ai-sys1/cctv-ip-or-lan-usb-camera-ingest-ai-inference"
 AI_CAMERA_NODE2_USER=srrmk AI_CAMERA_NODE2_IP=192.168.29.188 \
   ./scripts/common/sync_repo_to_node2.sh
 ```

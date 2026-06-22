@@ -122,11 +122,17 @@ Step 12 temporarily stops the production Node1 receiver so it can bind UDP `5000
 ./scripts/validate_step12_yolo_onnx.sh
 ```
 
-This always runs synthetic postprocess tests on Node1. If a real model exists:
+This always runs synthetic postprocess tests on Node1. To include the real-model smoke, download and pin the default model first:
 
 ```bash
-export AI_CAMERA_YOLO_MODEL=models/object_detection/your_model.onnx
+./scripts/models/download_yolo_onnx.sh
 ./scripts/validate_step12_yolo_onnx.sh
+```
+
+Default path:
+
+```text
+AI_CAMERA_YOLO_MODEL=models/object_detection/yolo11n.onnx
 ```
 
 ## Layer 8 — Grafana/Prometheus provisioning validation
