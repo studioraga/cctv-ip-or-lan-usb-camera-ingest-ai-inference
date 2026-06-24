@@ -27,8 +27,30 @@ class CaptureSessionRequest(BaseModel):
     dataset_mode: str = Field(default="source_jpeg", pattern="^source_jpeg$")
     frame_stride: int = Field(default=1, ge=1, le=3600)
     max_bytes: Optional[int] = Field(default=None, ge=1)
+    live_mp4: bool = False
+    live_mp4_fps: float = Field(default_factory=lambda: float(__import__("os").getenv("AI_CAMERA_MOTION_STREAM_LIVE_MP4_FPS", "15")), ge=1.0, le=60.0)
+    live_mp4_width: int = Field(default_factory=lambda: int(__import__("os").getenv("AI_CAMERA_MOTION_STREAM_LIVE_MP4_WIDTH", "640")), ge=160, le=1920)
     requested_by: Optional[str] = Field(default="grafana", max_length=128)
     notes: str = Field(default="", max_length=1000)
+
+
+class MotionStreamRequest(BaseModel):
+    camera_id: str = Field(default_factory=lambda: __import__("os").getenv("AI_CAMERA_CAMERA_ID", "c922_node2_gate"), min_length=1)
+    profile: str = "mjpeg_720p30"
+    duration_sec: int = Field(default_factory=lambda: int(__import__("os").getenv("AI_CAMERA_MOTION_STREAM_DURATION_SEC", "60")), ge=1, le=7200)
+    device: str = "/dev/video0"
+    udp_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    frame_stride: int = Field(default=1, ge=1, le=3600)
+    requested_by: Optional[str] = Field(default="node2_motion", max_length=128)
+    notes: str = Field(default="", max_length=1000)
+    motion_score: Optional[float] = Field(default=None, ge=0.0)
+    motion_source: str = Field(default="node2", max_length=64)
+    live_mp4_fps: float = Field(default_factory=lambda: float(__import__("os").getenv("AI_CAMERA_MOTION_STREAM_LIVE_MP4_FPS", "15")), ge=1.0, le=60.0)
+    live_mp4_width: int = Field(default_factory=lambda: int(__import__("os").getenv("AI_CAMERA_MOTION_STREAM_LIVE_MP4_WIDTH", "640")), ge=160, le=1920)
+
+
+class Node2MotionEventRequest(MotionStreamRequest):
+    event_type: str = Field(default="motion_detected", pattern="^motion_detected$")
 
 
 class QueryRequest(BaseModel):

@@ -683,3 +683,64 @@ See also:
 - `docs/STARTUP_SCRIPTS.md`
 - `docs/TASK1_IMPLEMENTATION_NOTES.md`
 - `docs/GIT_COMMIT_MESSAGE_VALIDATION_MILESTONE.md`
+
+
+## Step 14 — Motion-triggered Node1 live MP4 stream
+
+Step 14 turns the Step 13 capture demo into a more meaningful product milestone:
+Node2 reports motion, Node1 starts a bounded MP4-capable capture session, and LAN
+clients can view/download the motion stream through Node1 API.
+
+Start from the already-validated Node2/Node1 services:
+
+```bash
+# Node2
+./scripts/startup/node2_startup_steps12.sh
+
+# Node1
+./scripts/startup/node1_startup_steps12.sh --download-yolo --run-validations
+./scripts/startup/node1_startup_step13.sh
+```
+
+Run the Step 14 validation from Node1:
+
+```bash
+./scripts/startup/node1_startup_step14.sh --duration-sec 60
+```
+
+Manual Node2-style trigger endpoint:
+
+```bash
+curl -fsS -X POST http://192.168.29.20:8080/motion/events/node2   -H 'Content-Type: application/json'   -d '{
+    "camera_id": "c922_node2_gate",
+    "profile": "mjpeg_720p30",
+    "duration_sec": 60,
+    "device": "/dev/video0",
+    "motion_score": 1.0,
+    "motion_source": "node2",
+    "requested_by": "node2_motion"
+  }' | python3 -m json.tool
+```
+
+The response includes:
+
+```text
+/motion/streams/<session_id>/live.mp4
+/motion/streams/<session_id>/preview.mp4
+/capture/sessions/<session_id>
+/capture/sessions/<session_id>/artifacts
+```
+
+LAN viewer:
+
+```bash
+vlc http://192.168.29.20:8080/motion/streams/<session_id>/live.mp4
+```
+
+After completion:
+
+```bash
+vlc http://192.168.29.20:8080/motion/streams/<session_id>/preview.mp4
+```
+
+See `docs/STEP14_MOTION_LIVE_MP4.md` for the full API and validation flow.

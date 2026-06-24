@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+import time
+from typing import Iterator, Optional
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, generate_latest
-from starlette.responses import FileResponse, HTMLResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
-from services.common.event_db import EventDB
+from services.common.event_db import EventDB, now_iso
 from services.common.path_security import UnsafeMediaPath, resolve_media_path
 from services.common.policy import PolicyError, SecurityPolicy
-from services.node1_api_gateway.schemas import CaptureSessionRequest, QueryRequest, StartCameraRequest, SwitchProfileRequest
+from services.node1_api_gateway.schemas import CaptureSessionRequest, MotionStreamRequest, Node2MotionEventRequest, QueryRequest, StartCameraRequest, SwitchProfileRequest
 from services.node1_query_engine.nl_parser import parse_question
 from services.node1_capture_orchestrator.session_manager import CaptureMetrics, CaptureSessionManager
 
@@ -38,6 +39,81 @@ def _requester_ip(request: Request) -> Optional[str]:
 def _policy_denied(detail: str) -> HTTPException:
     return HTTPException(status_code=403, detail=detail)
 
+
+
+
+def _motion_capture_request(req: MotionStreamRequest, *, event_label: str) -> CaptureSessionRequest:
+    notes = req.notes.strip()
+    trigger_note = f"{event_label}; motion_source={req.motion_source}"
+    if req.motion_score is not None:
+        trigger_note += f"; motion_score={req.motion_score:.3f}"
+    notes = f"{trigger_note}. {notes}".strip()
+    return CaptureSessionRequest(
+        camera_id=req.camera_id,
+        profile=req.profile,
+        duration_sec=req.duration_sec,
+        device=req.device,
+        transport="timed_jpeg_udp",
+        udp_port=req.udp_port,
+        dataset_mode="source_jpeg",
+        frame_stride=req.frame_stride,
+        requested_by=req.requested_by,
+        notes=notes,
+        live_mp4=True,
+        live_mp4_fps=req.live_mp4_fps,
+        live_mp4_width=req.live_mp4_width,
+    )
+
+
+def _stream_urls(session_id: str) -> dict[str, str]:
+    return {
+        "status_url": f"/capture/sessions/{session_id}",
+        "artifacts_url": f"/capture/sessions/{session_id}/artifacts",
+        "live_mp4_url": f"/motion/streams/{session_id}/live.mp4",
+        "preview_mp4_url": f"/motion/streams/{session_id}/preview.mp4",
+        "manifest_url": f"/datasets/{session_id}/manifest",
+    }
+
+
+def _node2_or_local_request_allowed(camera_id: str, request: Request) -> bool:
+    source = _requester_ip(request)
+    if source in {"127.0.0.1", "::1", os.getenv("AI_CAMERA_NODE1_IP", "")} or source is None:
+        return True
+    return policy.is_source_allowed(camera_id, source)
+
+
+def _dataset_artifact_path(session_id: str, relative: str) -> Path:
+    session = capture_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="motion stream/capture session not found")
+    try:
+        root = policy.media_root("dataset")
+        return resolve_media_path(str(Path(session["dataset_path"]) / relative), root)
+    except (PolicyError, UnsafeMediaPath, OSError) as exc:
+        raise _policy_denied("motion stream artifact access denied") from exc
+
+
+def _tail_growing_file(path: Path, session_id: str, *, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+    offset = 0
+    idle_after_terminal = 0
+    while True:
+        if path.exists() and path.is_file():
+            with path.open("rb") as f:
+                f.seek(offset)
+                chunk = f.read(chunk_size)
+            if chunk:
+                offset += len(chunk)
+                idle_after_terminal = 0
+                yield chunk
+                continue
+        session = capture_manager.get_session(session_id)
+        status = session.get("status") if session else "missing"
+        if status not in {"pending", "running"}:
+            # Give ffmpeg/file flush a brief grace period, then stop tailing.
+            idle_after_terminal += 1
+            if idle_after_terminal >= 8:
+                break
+        time.sleep(0.25)
 
 def _node2_request(method: str, camera_id: str, endpoint: str, **kwargs):
     try:
@@ -319,6 +395,111 @@ async function startCapture() {{
 </body>
 </html>
 """
+
+
+@app.post("/motion/streams/start")
+def motion_stream_start(req: MotionStreamRequest, request: Request):
+    """Start a motion-triggered 60-second Node2->Node1 capture with live MP4 artifact generation.
+
+    This endpoint is useful for manual validation and for a future Node2 motion
+    detector to call after detecting motion locally. It reuses the Step 13
+    timestamped JPEG/UDP capture path, but enables live fragmented-MP4 output.
+    """
+    api_requests.labels("motion_stream_start").inc()
+    try:
+        cap_req = _motion_capture_request(req, event_label="manual_motion_stream_start")
+        session = capture_manager.start_session(cap_req, requested_source=_requester_ip(request))
+        event_id = f"mot_{session['session_id']}"
+        db.insert_event({
+            "event_id": event_id,
+            "camera_id": req.camera_id,
+            "clip_id": None,
+            "ts": now_iso(),
+            "event_type": "motion_stream_started",
+            "severity": "info",
+            "label": "motion",
+            "confidence": None if req.motion_score is None else min(float(req.motion_score), 1.0),
+            "attrs": {"session_id": session["session_id"], "motion_source": req.motion_source, "motion_score": req.motion_score},
+            "caption": f"Motion-triggered live MP4 stream started for {req.camera_id}.",
+        })
+        return {**session, **_stream_urls(session["session_id"]), "event_id": event_id}
+    except ValueError as exc:
+        api_errors.labels("motion_stream_start").inc()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        api_errors.labels("motion_stream_start").inc()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/motion/events/node2")
+def node2_motion_event(req: Node2MotionEventRequest, request: Request):
+    """Webhook for Node2-side motion detection to start a live MP4 stream.
+
+    Node2 or a Node2-side detector should call this endpoint when it detects
+    motion. Node1 then starts a bounded capture session and exposes a live MP4
+    endpoint while recording continues.
+    """
+    api_requests.labels("node2_motion_event").inc()
+    if not _node2_or_local_request_allowed(req.camera_id, request):
+        raise _policy_denied("motion event source is not authorized")
+    cap_req = _motion_capture_request(req, event_label="node2_motion_detected")
+    try:
+        session = capture_manager.start_session(cap_req, requested_source=_requester_ip(request))
+        event_id = f"mot_{session['session_id']}"
+        db.insert_event({
+            "event_id": event_id,
+            "camera_id": req.camera_id,
+            "clip_id": None,
+            "ts": now_iso(),
+            "event_type": "node2_motion_detected",
+            "severity": "info",
+            "label": "motion",
+            "confidence": None if req.motion_score is None else min(float(req.motion_score), 1.0),
+            "attrs": {"session_id": session["session_id"], "motion_source": req.motion_source, "motion_score": req.motion_score},
+            "caption": f"Node2 reported motion and Node1 started live MP4 capture for {req.camera_id}.",
+        })
+        return {**session, **_stream_urls(session["session_id"]), "event_id": event_id}
+    except ValueError as exc:
+        api_errors.labels("node2_motion_event").inc()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        api_errors.labels("node2_motion_event").inc()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/motion/streams/current")
+def motion_stream_current(camera_id: str = CAMERA_ID):
+    api_requests.labels("motion_stream_current").inc()
+    policy.camera(camera_id)
+    active = db.get_active_capture_session(camera_id)
+    if not active:
+        return {"active": False, "camera_id": camera_id}
+    return {"active": True, **active, **_stream_urls(active["session_id"])}
+
+
+@app.get("/motion/streams/{session_id}/live.mp4")
+def motion_stream_live_mp4(session_id: str):
+    api_requests.labels("motion_stream_live_mp4").inc()
+    session = capture_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="motion stream/capture session not found")
+    path = _dataset_artifact_path(session_id, "artifacts/live.mp4")
+    if not path.exists():
+        if session.get("status") in {"pending", "running"}:
+            return StreamingResponse(_tail_growing_file(path, session_id), media_type="video/mp4", headers={"Cache-Control": "no-store"})
+        raise HTTPException(status_code=404, detail="live MP4 artifact not found for this session")
+    if session.get("status") in {"pending", "running"}:
+        return StreamingResponse(_tail_growing_file(path, session_id), media_type="video/mp4", headers={"Cache-Control": "no-store"})
+    return FileResponse(path, media_type="video/mp4", filename=f"{session_id}_live.mp4")
+
+
+@app.get("/motion/streams/{session_id}/preview.mp4")
+def motion_stream_preview_mp4(session_id: str):
+    api_requests.labels("motion_stream_preview_mp4").inc()
+    path = _dataset_artifact_path(session_id, "artifacts/preview.mp4")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="preview MP4 is not ready")
+    return FileResponse(path, media_type="video/mp4", filename=f"{session_id}_preview.mp4")
 
 
 @app.post("/query")

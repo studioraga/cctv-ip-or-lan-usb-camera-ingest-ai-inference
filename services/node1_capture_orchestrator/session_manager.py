@@ -22,6 +22,7 @@ from services.common.event_db import EventDB, now_iso
 from services.common.policy import SecurityPolicy
 from services.common.timed_frame_protocol import TimedFrameReassembler
 from services.node1_capture_orchestrator.dataset_writer import DatasetWriter
+from services.node1_capture_orchestrator.live_mp4 import FragmentedMp4Writer
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,9 @@ class CaptureSessionConfig:
     requested_by: Optional[str] = None
     requested_source: Optional[str] = None
     notes: str = ""
+    live_mp4: bool = False
+    live_mp4_fps: float = 15.0
+    live_mp4_width: int = 640
 
 
 class CaptureMetrics:
@@ -185,6 +189,9 @@ class CaptureSessionManager:
         udp_port = int(getattr(request, "udp_port", None) or self.capture_udp_port)
         frame_stride = int(getattr(request, "frame_stride", 1) or 1)
         max_bytes = getattr(request, "max_bytes", None)
+        live_mp4 = bool(getattr(request, "live_mp4", False))
+        live_mp4_fps = float(getattr(request, "live_mp4_fps", 15.0) or 15.0)
+        live_mp4_width = int(getattr(request, "live_mp4_width", 640) or 640)
 
         if transport != "timed_jpeg_udp":
             raise ValueError("dataset capture currently requires transport=timed_jpeg_udp")
@@ -216,6 +223,9 @@ class CaptureSessionManager:
                 requested_by=getattr(request, "requested_by", None),
                 requested_source=requested_source,
                 notes=getattr(request, "notes", ""),
+                live_mp4=live_mp4,
+                live_mp4_fps=live_mp4_fps,
+                live_mp4_width=live_mp4_width,
             )
             dataset_path = str(Path(self.dataset_root) / session_id)
             self.db.create_capture_session({
@@ -294,9 +304,20 @@ class CaptureSessionManager:
         status = "completed"
         error: Optional[str] = None
         sock: Optional[socket.socket] = None
+        live_mp4: Optional[FragmentedMp4Writer] = None
+        live_mp4_path: Optional[Path] = None
         started = time.monotonic()
         try:
             writer.prepare()
+            if cfg.live_mp4:
+                live_mp4_path = writer.artifacts_dir / "live.mp4"
+                live_mp4 = FragmentedMp4Writer(live_mp4_path, fps=cfg.live_mp4_fps, width=cfg.live_mp4_width)
+                if live_mp4.start():
+                    writer.append_event("live_mp4_started", {"path": str(live_mp4_path), "fps": cfg.live_mp4_fps, "width": cfg.live_mp4_width})
+                else:
+                    writer.append_event("live_mp4_unavailable", {"error": live_mp4.error})
+                    live_mp4 = None
+                    live_mp4_path = None
             self.db.update_capture_session(cfg.session_id, status="running", started_at=now_iso(), dataset_path=writer.dataset_path)
             self.metrics.start(cfg)
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -328,6 +349,8 @@ class CaptureSessionManager:
                 )
                 elapsed = max(0.0, time.monotonic() - started)
                 if result.written:
+                    if live_mp4 is not None:
+                        live_mp4.write_jpeg(frame.jpeg)
                     self.metrics.observe_frame(
                         cfg,
                         frames=writer.frames_written,
@@ -356,9 +379,15 @@ class CaptureSessionManager:
             except Exception as exc:
                 if status == "completed":
                     writer.append_event("node2_stop_warning", {"error": str(exc)})
+            if live_mp4 is not None:
+                try:
+                    live_mp4.close()
+                    writer.append_event("live_mp4_finished", {"path": str(live_mp4_path), "frames_written": live_mp4.frames_written, "error": live_mp4.error})
+                except Exception as exc:
+                    writer.append_event("live_mp4_close_warning", {"error": str(exc)})
             if sock is not None:
                 sock.close()
-            manifest = writer.finalize(status=status, error=error)
+            manifest = writer.finalize(status=status, error=error, live_mp4_path=live_mp4_path)
             self.db.update_capture_session(
                 cfg.session_id,
                 status=status,
@@ -378,6 +407,8 @@ class CaptureSessionManager:
             ]
             if writer.preview_path.is_file():
                 artifacts.append(("preview_mp4", writer.preview_path, "video/mp4"))
+            if live_mp4_path is not None and live_mp4_path.is_file() and live_mp4_path.stat().st_size > 0:
+                artifacts.append(("live_mp4", live_mp4_path, "video/mp4"))
             for artifact_type, path, media_type in artifacts:
                 self.db.insert_capture_artifact({
                     "artifact_id": f"{cfg.session_id}_{artifact_type}",

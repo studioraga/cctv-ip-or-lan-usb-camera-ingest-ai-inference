@@ -191,9 +191,15 @@ class DatasetWriter:
             self.append_event("preview_generation_failed", {"error": str(exc)})
         return None
 
-    def finalize(self, *, status: str, error: Optional[str] = None, prometheus_snapshot: str = "") -> dict[str, Any]:
+    def finalize(self, *, status: str, error: Optional[str] = None, prometheus_snapshot: str = "", live_mp4_path: Optional[Path] = None) -> dict[str, Any]:
         self.ended_wall_ns = _now_ns()
         preview_rel = self._make_preview()
+        live_mp4_rel = None
+        if live_mp4_path is not None and live_mp4_path.is_file() and live_mp4_path.stat().st_size > 0:
+            try:
+                live_mp4_rel = str(live_mp4_path.relative_to(self.session_dir))
+            except ValueError:
+                live_mp4_rel = str(live_mp4_path)
         elapsed_sec = None
         if self.started_wall_ns:
             elapsed_sec = (self.ended_wall_ns - self.started_wall_ns) / 1_000_000_000.0
@@ -237,6 +243,7 @@ class DatasetWriter:
                 "prometheus_snapshot": "artifacts/prometheus_snapshot.txt" if prometheus_snapshot else None,
                 "report": "artifacts/report.md",
                 "preview_mp4": preview_rel,
+                "live_mp4": live_mp4_rel,
             },
             "metrics": metrics,
         }
@@ -269,5 +276,6 @@ class DatasetWriter:
             "- `artifacts/metrics_summary.json`",
             "- `artifacts/report.md`",
             "- `artifacts/preview.mp4` when ffmpeg preview generation succeeds",
+            "- `artifacts/live.mp4` when live fragmented-MP4 generation is enabled",
             "",
         ])

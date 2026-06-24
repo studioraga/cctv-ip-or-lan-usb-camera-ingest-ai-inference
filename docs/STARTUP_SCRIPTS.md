@@ -125,3 +125,16 @@ that generated file into the Prometheus container.
 If `docker compose up` was run before rendering the file, Docker may have
 created `configs/runtime/prometheus.yml` as a directory. The render script
 repairs that specific stale path and writes the expected file.
+
+
+## Step 14 motion-triggered live MP4 startup
+
+After Node2 Step 12 and Node1 Step 12/13 are healthy:
+
+```bash
+./scripts/startup/node1_startup_step14.sh --duration-sec 60
+```
+
+This posts a Node2-style motion event to Node1, starts a bounded capture session,
+creates `artifacts/live.mp4` while recording, creates `artifacts/preview.mp4` after
+completion, and prints the LAN viewer URLs.
