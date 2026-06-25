@@ -55,6 +55,23 @@ def test_decode_yolov8_transposed_output():
     assert dets[1].label == "a"
 
 
+def test_decode_yolov8_yolo11_coco_person_class0_output():
+    meta = LetterboxMeta(original_shape=(640, 640), input_shape=(640, 640), ratio=1.0, pad_left=0.0, pad_top=0.0)
+    # YOLOv8/YOLO11 COCO layout: (1, 4 + 80 classes, N).
+    # Column 4 is class 0 = person, not YOLOv5 objectness.
+    pred = np.zeros((1, 84, 1), dtype=np.float32)
+    pred[0, 0:4, 0] = [320, 320, 100, 100]
+    pred[0, 4, 0] = 0.95
+    class_names = ["person"] + [f"class_{i}" for i in range(1, 80)]
+
+    dets = decode_yolo_output([pred], meta, class_names=class_names, confidence_threshold=0.25, iou_threshold=0.45)
+
+    assert len(dets) == 1
+    assert dets[0].label == "person"
+    assert dets[0].class_id == 0
+    assert dets[0].confidence == pytest.approx(0.95, rel=1e-5)
+
+
 def test_nms_suppresses_overlapping_boxes():
     boxes = np.array([[0, 0, 100, 100], [10, 10, 110, 110], [200, 200, 260, 260]], dtype=np.float32)
     scores = np.array([0.9, 0.8, 0.7], dtype=np.float32)

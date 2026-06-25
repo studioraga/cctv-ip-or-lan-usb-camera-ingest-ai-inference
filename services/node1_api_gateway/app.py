@@ -19,7 +19,7 @@ from services.node1_capture_orchestrator.session_manager import CaptureMetrics, 
 
 DB_PATH = os.getenv("AI_CAMERA_DB", "data/events/ai_camera.db")
 POLICY_PATH = os.getenv("AI_CAMERA_POLICY", "policies/security_policy.yaml")
-CAMERA_ID = os.getenv("AI_CAMERA_ID", "c922_node2_gate")
+CAMERA_ID = os.getenv("AI_CAMERA_CAMERA_ID", "c922_node2_gate")
 
 # Startup deliberately fails when policy or migrations are invalid.
 db = EventDB(DB_PATH)
@@ -40,6 +40,38 @@ def _policy_denied(detail: str) -> HTTPException:
     return HTTPException(status_code=403, detail=detail)
 
 
+def _model_dump(value):
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if hasattr(value, "dict"):
+        return value.dict()
+    return dict(value)
+
+
+def _motion_event_attrs(req: MotionStreamRequest, session_id: str) -> dict:
+    attrs = {
+        "session_id": session_id,
+        "motion_source": req.motion_source,
+        "motion_score": req.motion_score,
+    }
+    detections = [_model_dump(d) for d in getattr(req, "detections", [])]
+    if detections:
+        attrs["detections"] = detections
+        attrs["detection_count"] = len(detections)
+        attrs["top_detection"] = detections[0]
+    for field in ("trigger_frame_id", "trigger_wall_ns", "cooldown_sec"):
+        value = getattr(req, field, None)
+        if value is not None:
+            attrs[field] = value
+    return attrs
+
+
+def _motion_event_confidence(req: MotionStreamRequest) -> Optional[float]:
+    detections = [_model_dump(d) for d in getattr(req, "detections", [])]
+    if detections:
+        top = max(detections, key=lambda d: float(d.get("confidence", 0.0)))
+        return float(top.get("confidence", 0.0))
+    return None
 
 
 def _motion_capture_request(req: MotionStreamRequest, *, event_label: str) -> CaptureSessionRequest:
@@ -47,6 +79,10 @@ def _motion_capture_request(req: MotionStreamRequest, *, event_label: str) -> Ca
     trigger_note = f"{event_label}; motion_source={req.motion_source}"
     if req.motion_score is not None:
         trigger_note += f"; motion_score={req.motion_score:.3f}"
+    detections = [_model_dump(d) for d in getattr(req, "detections", [])]
+    if detections:
+        top = detections[0]
+        trigger_note += f"; detections={len(detections)}; top={top.get('label')}:{float(top.get('confidence', 0.0)):.2f}"
     notes = f"{trigger_note}. {notes}".strip()
     return CaptureSessionRequest(
         camera_id=req.camera_id,
@@ -418,8 +454,8 @@ def motion_stream_start(req: MotionStreamRequest, request: Request):
             "event_type": "motion_stream_started",
             "severity": "info",
             "label": "motion",
-            "confidence": None if req.motion_score is None else min(float(req.motion_score), 1.0),
-            "attrs": {"session_id": session["session_id"], "motion_source": req.motion_source, "motion_score": req.motion_score},
+            "confidence": _motion_event_confidence(req),
+            "attrs": _motion_event_attrs(req, session["session_id"]),
             "caption": f"Motion-triggered live MP4 stream started for {req.camera_id}.",
         })
         return {**session, **_stream_urls(session["session_id"]), "event_id": event_id}
@@ -454,9 +490,9 @@ def node2_motion_event(req: Node2MotionEventRequest, request: Request):
             "event_type": "node2_motion_detected",
             "severity": "info",
             "label": "motion",
-            "confidence": None if req.motion_score is None else min(float(req.motion_score), 1.0),
-            "attrs": {"session_id": session["session_id"], "motion_source": req.motion_source, "motion_score": req.motion_score},
-            "caption": f"Node2 reported motion and Node1 started live MP4 capture for {req.camera_id}.",
+            "confidence": _motion_event_confidence(req),
+            "attrs": _motion_event_attrs(req, session["session_id"]),
+            "caption": f"Node2 reported motion/person/object detection and Node1 started live MP4 capture for {req.camera_id}.",
         })
         return {**session, **_stream_urls(session["session_id"]), "event_id": event_id}
     except ValueError as exc:
@@ -471,7 +507,7 @@ def node2_motion_event(req: Node2MotionEventRequest, request: Request):
 def motion_stream_current(camera_id: str = CAMERA_ID):
     api_requests.labels("motion_stream_current").inc()
     policy.camera(camera_id)
-    active = db.get_active_capture_session(camera_id)
+    active = capture_manager.get_active_session(camera_id)
     if not active:
         return {"active": False, "camera_id": camera_id}
     return {"active": True, **active, **_stream_urls(active["session_id"])}

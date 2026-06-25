@@ -36,7 +36,7 @@ def main() -> int:
       'DEVICE':os.getenv('AI_CAMERA_DEVICE','/dev/video0'),'EVENT_LOG':abs_path(root,os.getenv('AI_CAMERA_EVENT_LOG','results/node1/events.jsonl')),
       'LATENCY_THRESHOLD_MS':os.getenv('AI_CAMERA_LATENCY_THRESHOLD_MS','5.0'),'LATENCY_WINDOW_SAMPLES':os.getenv('AI_CAMERA_LATENCY_WINDOW_SAMPLES','120'),
     }
-    units=['node1-ai-camera-api','node1-ai-camera-receiver'] if args.role=='node1' else ['node2-camera-control-agent']
+    units=['node1-ai-camera-api','node1-ai-camera-receiver'] if args.role=='node1' else ['node2-camera-control-agent','node2-motion-watcher']
     out=Path(args.output_dir)
     if not args.dry_run: out.mkdir(parents=True,exist_ok=True)
     for name in units:

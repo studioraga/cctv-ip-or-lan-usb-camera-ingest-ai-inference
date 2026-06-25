@@ -13,6 +13,7 @@ sudo apt install -y \
   python3 \
   python3-venv \
   python3-pip \
+  python3-opencv \
   v4l-utils \
   ffmpeg \
   sqlite3 \

@@ -744,3 +744,34 @@ vlc http://192.168.29.20:8080/motion/streams/<session_id>/preview.mp4
 ```
 
 See `docs/STEP14_MOTION_LIVE_MP4.md` for the full API and validation flow.
+
+## Step 15: Node2 YOLO motion trigger for Node1-managed capture
+
+Step 15 adds the first real Node2-side trigger path for the Step 14 live MP4 capture flow. In the stable Option A design, Node2 runs a local watcher that owns `/dev/video0` while idle, uses a cheap frame-difference gate, confirms interesting motion with the shared YOLO ONNX detector, releases the camera, and posts a motion event to Node1. Node1 remains the session authority and starts the bounded `timed_jpeg_udp` capture through the existing Node2 control agent.
+
+```text
+Node2 watcher -> /motion/events/node2 on Node1
+Node1 CaptureSessionManager -> Node2 /stream/start transport=timed_jpeg_udp
+Node1 dataset writer -> source JPEG frames + live.mp4 + preview.mp4 + manifest/report
+Node2 watcher -> waits for terminal Node1 session status -> cooldown -> resumes watching
+```
+
+Static validation:
+
+```bash
+./scripts/validate_step15_node2_motion_trigger.sh --static-only
+```
+
+Synthetic end-to-end trigger validation from Node2 after Node1 and Node2 services are running:
+
+```bash
+./scripts/validate_step15_node2_motion_trigger.sh --synthetic-trigger
+```
+
+Manual one-shot real watcher run:
+
+```bash
+./scripts/node2/run_node2_motion_watcher.sh --one-shot
+```
+
+See `docs/STEP15_NODE2_YOLO_MOTION_TRIGGER.md` for the full state machine, environment variables, validation steps, and Option A limitations.

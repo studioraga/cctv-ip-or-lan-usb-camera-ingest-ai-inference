@@ -138,3 +138,31 @@ After Node2 Step 12 and Node1 Step 12/13 are healthy:
 This posts a Node2-style motion event to Node1, starts a bounded capture session,
 creates `artifacts/live.mp4` while recording, creates `artifacts/preview.mp4` after
 completion, and prints the LAN viewer URLs.
+
+## Step 15 Node2 motion watcher startup
+
+Step 15 adds `node2-motion-watcher.service` for Option A motion-triggered capture. The watcher owns `/dev/video0` during idle detection, releases it before Node1 starts the bounded capture session, then reopens it after Node1 reports session completion.
+
+Install dependencies and start the watcher on Node2:
+
+```bash
+./scripts/startup/node2_startup_step15.sh --install-deps
+```
+
+Install the service but do not enable it yet:
+
+```bash
+./scripts/startup/node2_startup_step15.sh --no-enable-watcher
+```
+
+Validate without camera/network effects:
+
+```bash
+./scripts/validate_step15_node2_motion_trigger.sh --static-only
+```
+
+Validate the Node2-to-Node1 trigger path with a synthetic person detection:
+
+```bash
+./scripts/validate_step15_node2_motion_trigger.sh --synthetic-trigger
+```

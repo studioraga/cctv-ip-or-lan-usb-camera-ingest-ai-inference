@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -49,8 +49,20 @@ class MotionStreamRequest(BaseModel):
     live_mp4_width: int = Field(default_factory=lambda: int(__import__("os").getenv("AI_CAMERA_MOTION_STREAM_LIVE_MP4_WIDTH", "640")), ge=160, le=1920)
 
 
+class DetectionPayload(BaseModel):
+    label: str = Field(min_length=1, max_length=128)
+    confidence: float = Field(ge=0.0, le=1.0)
+    bbox_xyxy: Optional[list[float]] = Field(default=None, min_length=4, max_length=4)
+    class_id: Optional[int] = None
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
 class Node2MotionEventRequest(MotionStreamRequest):
     event_type: str = Field(default="motion_detected", pattern="^motion_detected$")
+    detections: list[DetectionPayload] = Field(default_factory=list, max_length=100)
+    trigger_frame_id: Optional[int] = Field(default=None, ge=0)
+    trigger_wall_ns: Optional[int] = Field(default=None, ge=0)
+    cooldown_sec: Optional[float] = Field(default=None, ge=0.0, le=3600.0)
 
 
 class QueryRequest(BaseModel):

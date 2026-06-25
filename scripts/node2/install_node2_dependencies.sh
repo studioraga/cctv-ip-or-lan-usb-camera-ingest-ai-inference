@@ -7,7 +7,7 @@ sudo apt install -y \
   v4l-utils ffmpeg \
   gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-  python3-full python3-venv python3-pip htop iproute2 net-tools
+  python3-full python3-venv python3-pip python3-opencv htop iproute2 net-tools
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip

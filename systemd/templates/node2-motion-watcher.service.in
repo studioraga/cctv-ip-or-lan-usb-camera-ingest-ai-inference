@@ -1,0 +1,29 @@
+[Unit]
+Description=Node2 AI Camera Motion Watcher
+After=network-online.target node2-camera-control-agent.service
+Wants=network-online.target
+Requires=node2-camera-control-agent.service
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@REPO_ROOT@
+EnvironmentFile=@ENV_FILE@
+Environment=PYTHONNOUSERSITE=1
+ExecStartPre=@PYTHON@ scripts/common/render_runtime_config.py --role node2 --repo-root @REPO_ROOT@
+ExecStartPre=@PYTHON@ scripts/common/validate_policy.py --policy @POLICY@
+ExecStart=@PYTHON@ -m agents.node2.node2_motion_watcher
+Restart=on-failure
+RestartSec=3
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateDevices=false
+DeviceAllow=@DEVICE@ rw
+ReadWritePaths=@RUNTIME_CONFIG_DIR@ @RESULTS_DIR@
+
+[Install]
+WantedBy=multi-user.target

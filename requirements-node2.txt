@@ -9,3 +9,11 @@ pydantic>=2.6,<3.0
 pytest>=8.0,<9.0
 httpx2>=2.4,<3.0
 httpx>=0.27,<1.0
+
+# Step 15 Node2 motion watcher. OpenCV is imported lazily by the watcher so
+# non-camera control-agent validation remains lightweight. If a Jetson-specific
+# OpenCV/ONNX Runtime build is preferred, install that build and pin/override
+# these packages in the deployment venv.
+numpy>=1.23,<2.0
+onnxruntime>=1.17,<2.0
+opencv-python-headless>=4.8,<5.0

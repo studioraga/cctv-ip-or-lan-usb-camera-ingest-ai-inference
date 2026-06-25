@@ -109,10 +109,34 @@ def _normalize_output(raw: np.ndarray) -> np.ndarray:
         arr = arr[0]
     if arr.ndim != 2:
         raise ValueError(f"unsupported YOLO output shape: {arr.shape}")
-    # YOLOv8 ONNX commonly returns (84, N); YOLOv5 commonly returns (N, 85).
+    # YOLOv8/YOLO11 ONNX commonly returns (4 + classes, N), for example
+    # (84, 8400) for COCO.  YOLOv5 commonly returns (N, 5 + classes), for
+    # example (8400, 85).  Normalize both to (N, columns).
     if arr.shape[0] in range(5, 200) and (arr.shape[0] < arr.shape[1] or arr.shape[1] < 6):
         arr = arr.T
     return arr.astype(np.float32, copy=False)
+
+
+def _infer_yolo_layout(column_count: int, class_count: int | None) -> str:
+    """Return output layout for normalized YOLO rows.
+
+    Layout inference must not rely on score values.  YOLOv8/YOLO11 class
+    scores are also in [0, 1], so a value-based heuristic can accidentally
+    treat class-0 score as YOLOv5 objectness and shift all class IDs.
+    """
+    if class_count and column_count == 4 + class_count:
+        return "yolov8"
+    if class_count and column_count == 5 + class_count:
+        return "yolov5"
+    if column_count == 84:
+        return "yolov8"  # COCO: 4 box columns + 80 class scores.
+    if column_count == 85:
+        return "yolov5"  # COCO: 4 box columns + objectness + 80 class scores.
+    if column_count > 6 and (column_count - 4) in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 80}:
+        return "yolov8"
+    if column_count > 6:
+        return "yolov5"
+    return "yolov8"
 
 
 def decode_yolo_output(
@@ -128,20 +152,25 @@ def decode_yolo_output(
     if pred.shape[1] < 6:
         raise ValueError(f"YOLO output must have at least 6 columns, got {pred.shape}")
 
+    class_count = len(class_names) if class_names else None
+
     # Already postprocessed format: x1,y1,x2,y2,score,class_id.
-    # A 6-column tensor can also mean YOLO with two classes (cx,cy,w,h,c0,c1),
-    # so only treat it as postprocessed when class_id looks integer-like.
-    if pred.shape[1] == 6 and np.allclose(pred[:, 5], np.round(pred[:, 5]), atol=1e-4):
+    # A 6-column tensor can also mean YOLOv8 with two classes
+    # (cx,cy,w,h,c0,c1), so only treat it as postprocessed when class_id
+    # looks integer-like and no class-name count points to a 2-class model.
+    if (
+        pred.shape[1] == 6
+        and not (class_count and pred.shape[1] == 4 + class_count)
+        and np.allclose(pred[:, 5], np.round(pred[:, 5]), atol=1e-4)
+    ):
         boxes_xyxy = pred[:, :4]
         scores = pred[:, 4]
         class_ids = pred[:, 5].astype(np.int64)
     else:
         boxes_xyxy = _xywh_to_xyxy(pred[:, :4])
+        layout = _infer_yolo_layout(pred.shape[1], class_count)
         remaining = pred[:, 4:]
-        # YOLOv5 has objectness + class scores. Treat as YOLOv5 only when
-        # there are at least two class columns after objectness; otherwise a
-        # 4+classes tensor is YOLOv8-style.
-        if remaining.shape[1] >= 3 and remaining[:, 0].max(initial=0) <= 1.0:
+        if layout == "yolov5":
             obj = remaining[:, 0]
             cls_scores = remaining[:, 1:]
             class_ids = cls_scores.argmax(axis=1).astype(np.int64)

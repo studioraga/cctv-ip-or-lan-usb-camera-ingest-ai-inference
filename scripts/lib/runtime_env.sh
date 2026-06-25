@@ -7,10 +7,24 @@ export AI_CAMERA_REPO_ROOT="${AI_CAMERA_REPO_ROOT:-$AI_CAMERA_REPO_ROOT_DEFAULT}
 
 AI_CAMERA_ENV_FILE="${AI_CAMERA_ENV_FILE:-${AI_CAMERA_REPO_ROOT}/deploy/ai-camera.env}"
 if [[ -f "$AI_CAMERA_ENV_FILE" ]]; then
+  # Preserve any AI_CAMERA_* values already exported by the caller so command-line
+  # validation can temporarily override deploy/ai-camera.env without editing it.
+  # The env file still supplies defaults for variables that were not set.
+  declare -A _ai_camera_caller_env=()
+  while IFS= read -r _ai_camera_name; do
+    [[ "$_ai_camera_name" == AI_CAMERA_* ]] || continue
+    _ai_camera_caller_env["$_ai_camera_name"]="${!_ai_camera_name}"
+  done < <(compgen -v AI_CAMERA_)
+
   set -a
   # shellcheck disable=SC1090
   source "$AI_CAMERA_ENV_FILE"
   set +a
+
+  for _ai_camera_name in "${!_ai_camera_caller_env[@]}"; do
+    export "$_ai_camera_name=${_ai_camera_caller_env[$_ai_camera_name]}"
+  done
+  unset _ai_camera_name _ai_camera_caller_env
 fi
 
 export AI_CAMERA_REPO_ROOT="${AI_CAMERA_REPO_ROOT:-$AI_CAMERA_REPO_ROOT_DEFAULT}"
@@ -41,6 +55,19 @@ export AI_CAMERA_MODEL_DIR="${AI_CAMERA_MODEL_DIR:-models/object_detection}"
 export AI_CAMERA_YOLO_MODEL="${AI_CAMERA_YOLO_MODEL:-${AI_CAMERA_MODEL_DIR}/yolo11n.onnx}"
 export AI_CAMERA_YOLO_MODEL_URL="${AI_CAMERA_YOLO_MODEL_URL:-https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx}"
 export AI_CAMERA_YOLO_MODEL_SHA256="${AI_CAMERA_YOLO_MODEL_SHA256:-}"
+
+export AI_CAMERA_NODE2_WATCHER_SAMPLE_FPS="${AI_CAMERA_NODE2_WATCHER_SAMPLE_FPS:-5}"
+export AI_CAMERA_NODE2_WATCHER_MOTION_THRESHOLD="${AI_CAMERA_NODE2_WATCHER_MOTION_THRESHOLD:-12}"
+export AI_CAMERA_NODE2_WATCHER_CANDIDATE_WINDOW="${AI_CAMERA_NODE2_WATCHER_CANDIDATE_WINDOW:-5}"
+export AI_CAMERA_NODE2_WATCHER_REQUIRED_CONFIRMATIONS="${AI_CAMERA_NODE2_WATCHER_REQUIRED_CONFIRMATIONS:-2}"
+export AI_CAMERA_NODE2_WATCHER_COOLDOWN_SEC="${AI_CAMERA_NODE2_WATCHER_COOLDOWN_SEC:-20}"
+export AI_CAMERA_NODE2_WATCHER_REQUIRE_YOLO="${AI_CAMERA_NODE2_WATCHER_REQUIRE_YOLO:-1}"
+export AI_CAMERA_NODE2_WATCHER_YOLO_MODEL="${AI_CAMERA_NODE2_WATCHER_YOLO_MODEL:-${AI_CAMERA_YOLO_MODEL}}"
+export AI_CAMERA_NODE2_WATCHER_YOLO_INPUT_SIZE="${AI_CAMERA_NODE2_WATCHER_YOLO_INPUT_SIZE:-640}"
+export AI_CAMERA_NODE2_WATCHER_YOLO_CONFIDENCE="${AI_CAMERA_NODE2_WATCHER_YOLO_CONFIDENCE:-0.45}"
+export AI_CAMERA_NODE2_WATCHER_YOLO_IOU="${AI_CAMERA_NODE2_WATCHER_YOLO_IOU:-0.45}"
+export AI_CAMERA_NODE2_WATCHER_CLASSES="${AI_CAMERA_NODE2_WATCHER_CLASSES:-person,bicycle,car,motorcycle,bus,truck,cat,dog,backpack,suitcase}"
+export AI_CAMERA_NODE2_WATCHER_MAX_DETECTIONS="${AI_CAMERA_NODE2_WATCHER_MAX_DETECTIONS:-20}"
 
 ai_camera_abs_path() {
   local p="$1"

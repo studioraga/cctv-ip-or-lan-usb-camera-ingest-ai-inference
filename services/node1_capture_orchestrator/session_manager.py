@@ -175,8 +175,12 @@ class CaptureSessionManager:
         self.dataset_root = os.getenv("AI_CAMERA_DATASET_ROOT", "data/datasets")
         self.max_duration_sec = int(os.getenv("AI_CAMERA_CAPTURE_MAX_DURATION_SEC", "7200"))
         self._lock = threading.Lock()
+        self.progress_update_interval_sec = float(os.getenv("AI_CAMERA_CAPTURE_PROGRESS_UPDATE_INTERVAL_SEC", "1.0"))
+        self.progress_update_frame_interval = int(os.getenv("AI_CAMERA_CAPTURE_PROGRESS_UPDATE_FRAME_INTERVAL", "30"))
         self._stop_events: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._active_progress: dict[str, dict[str, Any]] = {}
+        self._last_progress_update_mono: dict[str, float] = {}
 
     def start_session(self, request: Any, *, requested_source: Optional[str] = None) -> dict[str, Any]:
         duration_sec = int(request.duration_sec)
@@ -264,7 +268,24 @@ class CaptureSessionManager:
         return self.get_session(session_id) or {"session_id": session_id, "status": "unknown"}
 
     def get_session(self, session_id: str) -> Optional[dict[str, Any]]:
-        return self.db.get_capture_session(session_id)
+        session = self.db.get_capture_session(session_id)
+        if not session:
+            return None
+        with self._lock:
+            progress = self._active_progress.get(session_id)
+            if progress:
+                session.update(progress)
+        return session
+
+    def get_active_session(self, camera_id: str) -> Optional[dict[str, Any]]:
+        active = self.db.get_active_capture_session(camera_id)
+        if not active:
+            return None
+        with self._lock:
+            progress = self._active_progress.get(active["session_id"])
+            if progress:
+                active.update(progress)
+        return active
 
     def list_sessions(self, *, camera_id: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
         return self.db.list_capture_sessions(camera_id=camera_id, limit=limit)
@@ -287,6 +308,65 @@ class CaptureSessionManager:
     def _node2_stop(self) -> None:
         resp = httpx.post(f"{self._node2_url()}/stream/stop", timeout=10.0)
         resp.raise_for_status()
+
+    def _record_running_progress(
+        self,
+        cfg: CaptureSessionConfig,
+        writer: DatasetWriter,
+        *,
+        started_mono: float,
+        live_mp4_path: Optional[Path] = None,
+        force: bool = False,
+    ) -> None:
+        """Expose active capture progress while the session is still running.
+
+        Without this, the capture_sessions SQLite row only changes at finalization,
+        so Node2 polls /capture/sessions/{session_id} and sees frames=0 for the
+        whole 60-second session even though frames are being written.
+        """
+        now_mono = time.monotonic()
+        last = self._last_progress_update_mono.get(cfg.session_id, 0.0)
+        frame_interval = max(1, self.progress_update_frame_interval)
+        time_due = (now_mono - last) >= max(0.1, self.progress_update_interval_sec)
+        frame_due = writer.frames_written > 0 and writer.frames_written % frame_interval == 0
+        if not force and not time_due and not frame_due:
+            return
+
+        elapsed = max(0.0, now_mono - started_mono)
+        live_mp4_bytes = 0
+        live_mp4_ready = False
+        if live_mp4_path is not None:
+            try:
+                if live_mp4_path.is_file():
+                    live_mp4_bytes = live_mp4_path.stat().st_size
+                    live_mp4_ready = live_mp4_bytes > 0
+            except OSError:
+                live_mp4_bytes = 0
+                live_mp4_ready = False
+
+        progress = {
+            "frames_written": writer.frames_written,
+            "bytes_written": writer.bytes_written,
+            "dropped_frames": writer.frames_skipped,
+            "elapsed_sec": elapsed,
+            "live_mp4_ready": live_mp4_ready,
+            "live_mp4_bytes": live_mp4_bytes,
+            "updated_at": now_iso(),
+        }
+        with self._lock:
+            self._active_progress[cfg.session_id] = progress
+            self._last_progress_update_mono[cfg.session_id] = now_mono
+
+        # Persist the important counters for API clients that read from SQLite
+        # directly through list/detail endpoints. Keep this throttled; do not
+        # commit once per frame at high FPS.
+        self.db.update_capture_session(
+            cfg.session_id,
+            frames_written=writer.frames_written,
+            bytes_written=writer.bytes_written,
+            dropped_frames=writer.frames_skipped,
+            updated_at=progress["updated_at"],
+        )
 
     def _run_session(self, cfg: CaptureSessionConfig, stop_event: threading.Event) -> None:
         writer = DatasetWriter(
@@ -319,6 +399,7 @@ class CaptureSessionManager:
                     live_mp4 = None
                     live_mp4_path = None
             self.db.update_capture_session(cfg.session_id, status="running", started_at=now_iso(), dataset_path=writer.dataset_path)
+            self._record_running_progress(cfg, writer, started_mono=started, live_mp4_path=live_mp4_path, force=True)
             self.metrics.start(cfg)
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -360,6 +441,7 @@ class CaptureSessionManager:
                         write_ms=result.write_latency_ms,
                         elapsed_sec=elapsed,
                     )
+                self._record_running_progress(cfg, writer, started_mono=started, live_mp4_path=live_mp4_path)
                 if writer.max_bytes is not None and writer.bytes_written >= writer.max_bytes:
                     writer.append_event("max_bytes_reached", {"bytes_written": writer.bytes_written})
                     break
@@ -388,6 +470,7 @@ class CaptureSessionManager:
             if sock is not None:
                 sock.close()
             manifest = writer.finalize(status=status, error=error, live_mp4_path=live_mp4_path)
+            self._record_running_progress(cfg, writer, started_mono=started, live_mp4_path=live_mp4_path, force=True)
             self.db.update_capture_session(
                 cfg.session_id,
                 status=status,
@@ -420,6 +503,9 @@ class CaptureSessionManager:
                     "sha256": _sha256_file(path) if path.exists() and path.is_file() else None,
                 })
             self.metrics.finish(cfg, status)
+            with self._lock:
+                self._active_progress.pop(cfg.session_id, None)
+                self._last_progress_update_mono.pop(cfg.session_id, None)
             self._stop_events.pop(cfg.session_id, None)
             self._threads.pop(cfg.session_id, None)
 
