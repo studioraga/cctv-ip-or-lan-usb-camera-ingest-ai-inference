@@ -60,11 +60,86 @@ wait_http() {
   return 1
 }
 
+grafana_sync_admin_password() {
+  local password="${GRAFANA_ADMIN_PASSWORD:-}"
+  if [[ "${AI_CAMERA_GRAFANA_SYNC_ADMIN_PASSWORD:-1}" != "1" ]]; then
+    echo "[INFO] Grafana admin password sync disabled by AI_CAMERA_GRAFANA_SYNC_ADMIN_PASSWORD=0"
+    return 0
+  fi
+  if [[ -z "$password" ]]; then
+    echo "[WARN] GRAFANA_ADMIN_PASSWORD is empty; skipping Grafana admin password sync."
+    return 0
+  fi
+
+  echo "=== Sync Grafana admin password from deploy env ==="
+  # Grafana only applies GF_SECURITY_ADMIN_PASSWORD when the database is first
+  # initialized. If the grafana_storage Docker volume already exists, changing
+  # deploy/ai-camera.env does not update the stored admin password. Reset it so
+  # the script's authenticated API checks use the same password as the operator
+  # expects for browser login.
+  if docker compose -f docker/docker-compose.node1.yml exec -T grafana \
+      grafana cli admin reset-admin-password "$password" >/tmp/ai_camera_grafana_reset.$$ 2>/tmp/ai_camera_grafana_reset_err.$$; then
+    sed 's/^/[GRAFANA] /' /tmp/ai_camera_grafana_reset.$$ || true
+    rm -f /tmp/ai_camera_grafana_reset.$$ /tmp/ai_camera_grafana_reset_err.$$
+    echo "[OK] Grafana admin password matches GRAFANA_ADMIN_PASSWORD from deploy env."
+    return 0
+  fi
+
+  echo "[WARN] Grafana admin password sync failed; API checks may return 401 if the Docker volume has an older password."
+  sed 's/^/[GRAFANA-RESET-ERR] /' /tmp/ai_camera_grafana_reset_err.$$ || true
+  rm -f /tmp/ai_camera_grafana_reset.$$ /tmp/ai_camera_grafana_reset_err.$$
+  return 0
+}
+
+grafana_search_dashboard() {
+  local url="http://${AI_CAMERA_OBSERVABILITY_HEALTH_HOST}:3000/api/search?query=AI%20Camera"
+  local user="${GRAFANA_ADMIN_USER:-admin}"
+  local password="${GRAFANA_ADMIN_PASSWORD:-admin}"
+  local body="/tmp/ai_camera_grafana_search.$$"
+  local err="/tmp/ai_camera_grafana_search_err.$$"
+  local code
+
+  code="$(curl -sS -u "${user}:${password}" -o "$body" -w '%{http_code}' "$url" 2>"$err" || true)"
+  case "$code" in
+    200)
+      python3 -m json.tool < "$body" || cat "$body"
+      rm -f "$body" "$err"
+      echo "[OK] Grafana authenticated API reachable and dashboard search completed."
+      return 0
+      ;;
+    401|403)
+      echo "[WARN] Grafana dashboard search returned HTTP ${code}."
+      echo "[WARN] This usually means the existing grafana_storage Docker volume has a different admin password than GRAFANA_ADMIN_PASSWORD."
+      echo "[WARN] The stack is healthy; browser login should use GRAFANA_ADMIN_USER=${user} and the current Grafana admin password."
+      echo "[WARN] To force the password from deploy/ai-camera.env, keep AI_CAMERA_GRAFANA_SYNC_ADMIN_PASSWORD=1 and rerun this startup script, or reset manually:"
+      echo "       docker compose -f docker/docker-compose.node1.yml exec -T grafana grafana cli admin reset-admin-password '<new-password>'"
+      rm -f "$body" "$err"
+      return 1
+      ;;
+    *)
+      echo "[WARN] Grafana dashboard search failed with HTTP ${code:-curl-error}."
+      sed 's/^/[GRAFANA-SEARCH-ERR] /' "$err" || true
+      [[ -s "$body" ]] && sed 's/^/[GRAFANA-SEARCH-BODY] /' "$body" || true
+      rm -f "$body" "$err"
+      return 1
+      ;;
+  esac
+}
+
+
 echo "=== Node1 Step 13 startup ==="
 echo "repo=$REPO_ROOT"
 echo "log=$LOG_FILE"
 echo "NODE1=${AI_CAMERA_NODE1_IP}:${AI_CAMERA_NODE1_API_PORT} metrics=${AI_CAMERA_NODE1_METRICS_PORT}"
 echo "NODE2=${AI_CAMERA_NODE2_IP}:${AI_CAMERA_NODE2_API_PORT}"
+echo "OBSERVABILITY_BIND=${AI_CAMERA_OBSERVABILITY_BIND:-127.0.0.1}"
+
+case "${AI_CAMERA_OBSERVABILITY_BIND:-127.0.0.1}" in
+  127.0.0.1|localhost) AI_CAMERA_OBSERVABILITY_HEALTH_HOST="127.0.0.1" ;;
+  0.0.0.0|::) AI_CAMERA_OBSERVABILITY_HEALTH_HOST="${AI_CAMERA_NODE1_IP}" ;;
+  *) AI_CAMERA_OBSERVABILITY_HEALTH_HOST="${AI_CAMERA_OBSERVABILITY_BIND}" ;;
+esac
+export AI_CAMERA_OBSERVABILITY_HEALTH_HOST
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "[FAIL] docker is not installed or not in PATH." >&2
@@ -95,15 +170,12 @@ echo "=== Compose status ==="
 docker compose -f docker/docker-compose.node1.yml ps
 
 echo "=== Health checks ==="
-wait_http "Prometheus" "http://${AI_CAMERA_NODE1_IP}:9090/-/healthy" 45 1
-wait_http "Grafana" "http://${AI_CAMERA_NODE1_IP}:3000/api/health" 45 1
-curl -fsS "http://${AI_CAMERA_NODE1_IP}:3000/api/health" | python3 -m json.tool || true
+wait_http "Prometheus" "http://${AI_CAMERA_OBSERVABILITY_HEALTH_HOST}:9090/-/healthy" 45 1
+wait_http "Grafana" "http://${AI_CAMERA_OBSERVABILITY_HEALTH_HOST}:3000/api/health" 45 1
+curl -fsS "http://${AI_CAMERA_OBSERVABILITY_HEALTH_HOST}:3000/api/health" | python3 -m json.tool || true
 
-if curl -fsS -u "${GRAFANA_ADMIN_USER:-admin}:${GRAFANA_ADMIN_PASSWORD:-admin}" "http://${AI_CAMERA_NODE1_IP}:3000/api/search?query=AI%20Camera" | python3 -m json.tool; then
-  echo "[OK] Grafana API reachable."
-else
-  echo "[WARN] Grafana dashboard search failed; check provisioning logs if the dashboard is missing."
-fi
+grafana_sync_admin_password
+grafana_search_dashboard || true
 
 if [[ "$RUN_CAPTURE_TEST" -eq 1 ]]; then
   echo "=== Run Step 13 capture-session validation ==="
@@ -112,4 +184,10 @@ else
   echo "[INFO] Capture-session validation skipped. Re-run with --capture-test to validate dataset capture."
 fi
 
+echo "[INFO] Local health URL: http://${AI_CAMERA_OBSERVABILITY_HEALTH_HOST}:3000/api/health"
+if [[ "${AI_CAMERA_OBSERVABILITY_BIND:-127.0.0.1}" == "127.0.0.1" || "${AI_CAMERA_OBSERVABILITY_BIND:-127.0.0.1}" == "localhost" ]]; then
+  echo "[INFO] Grafana is bound to localhost for lab-safe hardening. Set AI_CAMERA_OBSERVABILITY_BIND=0.0.0.0 or ${AI_CAMERA_NODE1_IP} for LAN dashboard access."
+else
+  echo "[INFO] Grafana dashboard URL: http://${AI_CAMERA_NODE1_IP}:3000/d/ai-camera-capture-session-demo/ai-camera-capture-session-demo"
+fi
 echo "[OK] Node1 Step 13 startup complete. Log: $LOG_FILE"

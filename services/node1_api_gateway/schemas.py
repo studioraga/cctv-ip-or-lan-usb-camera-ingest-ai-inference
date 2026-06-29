@@ -59,6 +59,7 @@ class DetectionPayload(BaseModel):
 
 class Node2MotionEventRequest(MotionStreamRequest):
     event_type: str = Field(default="motion_detected", pattern="^motion_detected$")
+    model_metadata: dict[str, Any] = Field(default_factory=dict)
     detections: list[DetectionPayload] = Field(default_factory=list, max_length=100)
     trigger_frame_id: Optional[int] = Field(default=None, ge=0)
     trigger_wall_ns: Optional[int] = Field(default=None, ge=0)

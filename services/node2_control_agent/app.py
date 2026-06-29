@@ -8,20 +8,36 @@ from ipaddress import ip_address
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, generate_latest
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
+from services.common.api_security import env_bool
 from services.common.policy import PolicyError, SecurityPolicy
+from services.common.request_signing import verify_signature
 from .streamer_service import streamer_service
 
 POLICY_PATH = os.getenv("AI_CAMERA_POLICY", "policies/security_policy.yaml")
 policy = SecurityPolicy(POLICY_PATH)
-app = FastAPI(title="Node2 Camera Control Agent", version="0.2.0-step1")
+NODE_API_SIGNING_SECRET = os.getenv("AI_CAMERA_NODE_API_SIGNING_SECRET", "").strip()
+REQUIRE_SIGNED_CONTROL = env_bool("AI_CAMERA_NODE2_REQUIRE_SIGNED_CONTROL", False)
+app = FastAPI(title="Node2 Camera Control Agent", version="0.3.0-production-readiness")
 
 METRICS_REGISTRY = CollectorRegistry()
 stream_running = Gauge("ai_camera_stream_running", "Whether Node2 streamer is running", ["profile"], registry=METRICS_REGISTRY)
 stream_starts = Counter("ai_camera_stream_starts_total", "Node2 stream start requests", ["profile"], registry=METRICS_REGISTRY)
 stream_stops = Counter("ai_camera_stream_stops_total", "Node2 stream stop requests", registry=METRICS_REGISTRY)
 control_errors = Counter("ai_camera_node2_control_errors_total", "Node2 control errors", ["reason"], registry=METRICS_REGISTRY)
+
+
+@app.middleware("http")
+async def signed_control_middleware(request: Request, call_next):
+    if REQUIRE_SIGNED_CONTROL and request.url.path not in {"/health"}:
+        body = await request.body()
+        request._body = body  # type: ignore[attr-defined]
+        result = verify_signature(NODE_API_SIGNING_SECRET, request.method, request.url.path, request.headers, body)
+        if not result.ok:
+            control_errors.labels("bad_signature").inc()
+            return JSONResponse(status_code=401, content={"detail": f"signed Node1 control request required: {result.reason}"})
+    return await call_next(request)
 
 
 class StartStreamRequest(BaseModel):

@@ -27,6 +27,28 @@ def require_ip(name: str, value: str) -> str:
 def csv(name: str, default: str) -> list[str]:
     return [x.strip() for x in os.getenv(name,default).split(',') if x.strip()]
 
+def additional_camera_specs(default_profiles: list[str], default_device: str, default_node1_ip: str, rtp: int, capture_port: int) -> list[dict]:
+    """Parse AI_CAMERA_ADDITIONAL_CAMERAS.
+
+    Format per camera: camera_id|source_ip|node2_port|device|profile1+profile2.
+    Example: gate2|192.168.29.189|8082|/dev/video0|mjpeg_720p30+mjpeg_480p30
+    """
+    specs=[]
+    raw=os.getenv('AI_CAMERA_ADDITIONAL_CAMERAS','').strip()
+    if not raw: return specs
+    for item in raw.split(';'):
+        if not item.strip(): continue
+        parts=[p.strip() for p in item.split('|')]
+        if len(parts) < 2: raise SystemExit(f'ERROR: bad AI_CAMERA_ADDITIONAL_CAMERAS item: {item!r}')
+        cam_id=parts[0]; ip=require_ip(f'additional camera {cam_id} source_ip', parts[1])
+        port=int(parts[2]) if len(parts) > 2 and parts[2] else int(os.getenv('AI_CAMERA_NODE2_API_PORT','8082'))
+        device=parts[3] if len(parts) > 3 and parts[3] else default_device
+        profiles=parts[4].split('+') if len(parts) > 4 and parts[4] else default_profiles
+        specs.append({'camera_id':cam_id,'source_ip':ip,'node2_url':f'http://{ip}:{port}',
+                      'allowed_node1_ips':[default_node1_ip],'allowed_ports':sorted(set([rtp,capture_port])),
+                      'allowed_profiles':profiles,'allowed_devices':[device]})
+    return specs
+
 def main() -> int:
     ap=argparse.ArgumentParser(); ap.add_argument('--role',choices=['node1','node2'],required=True); ap.add_argument('--repo-root'); args=ap.parse_args()
     root=Path(args.repo_root or os.getenv('AI_CAMERA_REPO_ROOT') or Path(__file__).resolve().parents[2]).resolve()
@@ -43,10 +65,12 @@ def main() -> int:
     profiles=csv('AI_CAMERA_ALLOWED_PROFILES','mjpeg_480p30,mjpeg_720p30,mjpeg_720p60')
     devices=csv('AI_CAMERA_ALLOWED_DEVICES',device)
     runtime=root/'configs/runtime'; runtime.mkdir(parents=True,exist_ok=True)
+    camera_policies=[{'camera_id':camera,'source_ip':n2,'node2_url':f'http://{n2}:{n2port}',
+                  'allowed_node1_ips':[n1],'allowed_ports':sorted(set([rtp,capture_port])),'allowed_profiles':profiles,'allowed_devices':devices}]
+    camera_policies.extend(additional_camera_specs(profiles, device, n1, rtp, capture_port))
     policy={
       'version':2,'name':'generated_local_lan_camera_policy',
-      'cameras':[{'camera_id':camera,'source_ip':n2,'node2_url':f'http://{n2}:{n2port}',
-                  'allowed_node1_ips':[n1],'allowed_ports':sorted(set([rtp,capture_port])),'allowed_profiles':profiles,'allowed_devices':devices}],
+      'cameras': camera_policies,
       'media':{'clip_root':os.getenv('AI_CAMERA_CLIP_ROOT','data/clips'),'keyframe_root':os.getenv('AI_CAMERA_KEYFRAME_ROOT','data/keyframes'),'dataset_root':os.getenv('AI_CAMERA_DATASET_ROOT','data/datasets')},
       'node2_control':{'trusted_client_ips':[n1,'127.0.0.1','::1']},
       'network_rules':[{'id':'allow_node2_camera_to_node1','source_ip':n2,'destination_ip':n1,'protocol':'udp','destination_port':rtp,'action':'allow'},

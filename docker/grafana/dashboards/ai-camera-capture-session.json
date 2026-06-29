@@ -1,58 +1,276 @@
 {
-  "annotations": {"list": []},
+  "annotations": {
+    "list": []
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": null,
   "links": [
-    {"title": "Start capture session", "type": "link", "url": "http://192.168.29.20:8080/ui/capture", "targetBlank": true}
+    {
+      "title": "Start capture session",
+      "type": "link",
+      "url": "http://192.168.29.20:8080/ui/capture",
+      "targetBlank": true
+    }
   ],
   "panels": [
     {
-      "type": "text", "title": "Capture Control", "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "# AI Camera Capture Demo\nOpen Node1 capture UI: [Start capture session](http://192.168.29.20:8080/ui/capture)\n\nThe UI creates `/capture/sessions` requests with `transport=timed_jpeg_udp`, stores source JPEG frames on Node1, and exposes Prometheus metrics below."}
+      "type": "text",
+      "title": "Capture Control",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "# AI Camera Capture Demo\nOpen Node1 capture UI: [Start capture session](http://192.168.29.20:8080/ui/capture)\n\nThe UI creates `/capture/sessions` requests with `transport=timed_jpeg_udp`, stores source JPEG frames on Node1, and exposes Prometheus metrics below."
+      }
     },
     {
-      "type": "stat", "title": "Active Capture", "gridPos": {"h": 4, "w": 6, "x": 0, "y": 5},
-      "targets": [{"expr": "max(ai_camera_capture_session_active)", "refId": "A"}]
+      "type": "stat",
+      "title": "Active Capture",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "max(ai_camera_capture_session_active)",
+          "refId": "A"
+        }
+      ]
     },
     {
-      "type": "stat", "title": "Frames Written", "gridPos": {"h": 4, "w": 6, "x": 6, "y": 5},
-      "targets": [{"expr": "max(ai_camera_capture_session_frames_total)", "refId": "A"}]
+      "type": "stat",
+      "title": "Frames Written",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "max(ai_camera_capture_session_frames_total)",
+          "refId": "A"
+        }
+      ]
     },
     {
-      "type": "stat", "title": "Bytes Written", "gridPos": {"h": 4, "w": 6, "x": 12, "y": 5},
-      "targets": [{"expr": "max(ai_camera_capture_session_bytes_written_total)", "refId": "A"}]
+      "type": "stat",
+      "title": "Bytes Written",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "max(ai_camera_capture_session_bytes_written_total)",
+          "refId": "A"
+        }
+      ]
     },
     {
-      "type": "stat", "title": "Dropped/Skipped Frames", "gridPos": {"h": 4, "w": 6, "x": 18, "y": 5},
-      "targets": [{"expr": "max(ai_camera_capture_session_dropped_frames_total)", "refId": "A"}]
+      "type": "stat",
+      "title": "Dropped/Skipped Frames",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "max(ai_camera_capture_session_dropped_frames_total)",
+          "refId": "A"
+        }
+      ]
     },
     {
-      "type": "timeseries", "title": "Capture E2E Latency Avg", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 9},
-      "targets": [{"expr": "rate(ai_camera_capture_session_e2e_latency_ms_sum[1m]) / rate(ai_camera_capture_session_e2e_latency_ms_count[1m])", "refId": "A"}]
+      "type": "timeseries",
+      "title": "Capture E2E Latency Avg",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "expr": "rate(ai_camera_capture_session_e2e_latency_ms_sum[1m]) / rate(ai_camera_capture_session_e2e_latency_ms_count[1m])",
+          "refId": "A"
+        }
+      ]
     },
     {
-      "type": "timeseries", "title": "Capture Write Latency Avg", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 9},
-      "targets": [{"expr": "rate(ai_camera_capture_session_write_latency_ms_sum[1m]) / rate(ai_camera_capture_session_write_latency_ms_count[1m])", "refId": "A"}]
+      "type": "timeseries",
+      "title": "Capture Write Latency Avg",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "targets": [
+        {
+          "expr": "rate(ai_camera_capture_session_write_latency_ms_sum[1m]) / rate(ai_camera_capture_session_write_latency_ms_count[1m])",
+          "refId": "A"
+        }
+      ]
     },
     {
-      "type": "timeseries", "title": "Node1 Receiver FPS", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 17},
-      "targets": [{"expr": "ai_camera_receiver_fps", "refId": "A"}]
+      "type": "timeseries",
+      "title": "Node1 Receiver FPS",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "targets": [
+        {
+          "expr": "ai_camera_receiver_fps",
+          "refId": "A"
+        }
+      ]
     },
     {
-      "type": "timeseries", "title": "Step 11/12 Latency Window Variation", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 17},
-      "targets": [{"expr": "ai_camera_latency_window_variation_ms", "refId": "A"}]
+      "type": "timeseries",
+      "title": "Step 11/12 Latency Window Variation",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "targets": [
+        {
+          "expr": "ai_camera_latency_window_variation_ms",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Motion Triggers by Class",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "sum by (label) (increase(ai_camera_motion_triggers_total[15m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Top Detection Confidence",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "max(ai_camera_motion_top_detection_confidence)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Motion Score Distribution",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "targets": [
+        {
+          "expr": "sum by (le) (rate(ai_camera_motion_score_bucket[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Trigger to Capture Start Latency",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 33
+      },
+      "targets": [
+        {
+          "expr": "rate(ai_camera_trigger_to_capture_start_latency_ms_sum[5m]) / rate(ai_camera_trigger_to_capture_start_latency_ms_count[5m])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Live MP4 Readiness Latency",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 33
+      },
+      "targets": [
+        {
+          "expr": "rate(ai_camera_live_mp4_ready_latency_ms_sum[5m]) / rate(ai_camera_live_mp4_ready_latency_ms_count[5m])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Per-session Artifact Completeness",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 41
+      },
+      "targets": [
+        {
+          "expr": "min(ai_camera_capture_session_artifact_complete)",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "refresh": "5s",
   "schemaVersion": 39,
-  "tags": ["ai-camera", "capture", "node1"],
-  "templating": {"list": []},
-  "time": {"from": "now-15m", "to": "now"},
+  "tags": [
+    "ai-camera",
+    "capture",
+    "node1"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
   "timezone": "browser",
   "title": "AI Camera Capture Session Demo",
   "uid": "ai-camera-capture-session-demo",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

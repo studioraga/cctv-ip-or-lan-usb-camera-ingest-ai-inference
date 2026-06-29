@@ -1,21 +1,29 @@
 from __future__ import annotations
 
+import json
 import os
 import time
+from contextlib import asynccontextmanager
 from typing import Iterator, Optional
 from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
-from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, generate_latest
-from starlette.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
+from services.common.api_security import ApiSecurityConfig, env_bool
 from services.common.event_db import EventDB, now_iso
 from services.common.path_security import UnsafeMediaPath, resolve_media_path
+from services.common.model_registry import ModelRegistry
+from services.common.onnx_provider_validation import provider_report
 from services.common.policy import PolicyError, SecurityPolicy
+from services.common.request_signing import signed_headers, verify_signature
+from services.common.storage_retention import StorageRetentionPolicy, storage_status
 from services.node1_api_gateway.schemas import CaptureSessionRequest, MotionStreamRequest, Node2MotionEventRequest, QueryRequest, StartCameraRequest, SwitchProfileRequest
 from services.node1_query_engine.nl_parser import parse_question
 from services.node1_capture_orchestrator.session_manager import CaptureMetrics, CaptureSessionManager
+from services.node1_event_indexer.indexer import build_index
 
 DB_PATH = os.getenv("AI_CAMERA_DB", "data/events/ai_camera.db")
 POLICY_PATH = os.getenv("AI_CAMERA_POLICY", "policies/security_policy.yaml")
@@ -24,12 +32,61 @@ CAMERA_ID = os.getenv("AI_CAMERA_CAMERA_ID", "c922_node2_gate")
 # Startup deliberately fails when policy or migrations are invalid.
 db = EventDB(DB_PATH)
 policy = SecurityPolicy(POLICY_PATH)
-app = FastAPI(title="Node1 AI Camera API Gateway", version="0.2.0-step1")
+api_security = ApiSecurityConfig.from_env(service="node1")
+model_registry = ModelRegistry.from_env()
+NODE_API_SIGNING_SECRET = os.getenv("AI_CAMERA_NODE_API_SIGNING_SECRET", "").strip()
+REQUIRE_SIGNED_NODE2 = env_bool("AI_CAMERA_NODE1_REQUIRE_SIGNED_NODE2", False)
+
+
+def _upsert_policy_cameras() -> None:
+    for cam in policy.cameras():
+        db.upsert_camera(
+            cam.camera_id,
+            f"AI Camera {cam.camera_id}",
+            "usb_rtp",
+            cam.source_ip,
+            cam.camera_id,
+            True,
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _upsert_policy_cameras()
+    yield
+
+
+app = FastAPI(title="Node1 AI Camera API Gateway", version="0.3.0-production-readiness", lifespan=lifespan)
 
 METRICS_REGISTRY = CollectorRegistry()
 api_requests = Counter("ai_camera_api_requests_total", "API requests", ["endpoint"], registry=METRICS_REGISTRY)
 api_errors = Counter("ai_camera_api_errors_total", "API errors", ["endpoint"], registry=METRICS_REGISTRY)
+api_auth_denied = Counter("ai_camera_api_auth_denied_total", "Node1 API authorization denials", ["reason"], registry=METRICS_REGISTRY)
+motion_triggers_total = Counter("ai_camera_motion_triggers_total", "Node1 accepted motion triggers by label", ["camera_id", "label"], registry=METRICS_REGISTRY)
+motion_score_observed = Histogram("ai_camera_motion_score", "Node2 watcher motion score", ["camera_id"], buckets=(1, 3, 5, 8, 12, 16, 24, 32, 48, 64, float("inf")), registry=METRICS_REGISTRY)
+motion_top_confidence = Gauge("ai_camera_motion_top_detection_confidence", "Top detection confidence from latest motion trigger", ["camera_id", "label"], registry=METRICS_REGISTRY)
+trigger_to_capture_start_ms = Histogram("ai_camera_trigger_to_capture_start_latency_ms", "Latency from Node2 trigger wall clock to Node1 capture-session acceptance", ["camera_id"], buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, float("inf")), registry=METRICS_REGISTRY)
 capture_manager = CaptureSessionManager(db, policy, metrics=CaptureMetrics(METRICS_REGISTRY))
+
+
+@app.middleware("http")
+async def node1_security_middleware(request: Request, call_next):
+    body = await request.body()
+    # Keep body available for FastAPI/Pydantic after the middleware reads it.
+    request._body = body  # type: ignore[attr-defined]
+    client_ip = request.client.host if request.client else None
+    decision = api_security.authorize(method=request.method, path=request.url.path, client_ip=client_ip, headers=request.headers)
+    if not decision.allowed:
+        reason = decision.reason.replace(" ", "_")[:64]
+        api_auth_denied.labels(reason).inc()
+        return JSONResponse(status_code=403, content={"detail": decision.reason, "required_roles": list(decision.required_roles)})
+    if REQUIRE_SIGNED_NODE2 and request.url.path.startswith("/motion/events/node2"):
+        sig = verify_signature(NODE_API_SIGNING_SECRET, request.method, request.url.path, request.headers, body)
+        if not sig.ok:
+            api_auth_denied.labels("bad_node2_signature").inc()
+            return JSONResponse(status_code=401, content={"detail": f"signed Node2 request required: {sig.reason}"})
+    return await call_next(request)
+
 
 
 def _requester_ip(request: Request) -> Optional[str]:
@@ -59,6 +116,9 @@ def _motion_event_attrs(req: MotionStreamRequest, session_id: str) -> dict:
         attrs["detections"] = detections
         attrs["detection_count"] = len(detections)
         attrs["top_detection"] = detections[0]
+    model_metadata = getattr(req, "model_metadata", None)
+    if model_metadata:
+        attrs["model_metadata"] = model_metadata
     for field in ("trigger_frame_id", "trigger_wall_ns", "cooldown_sec"):
         value = getattr(req, field, None)
         if value is not None:
@@ -72,6 +132,26 @@ def _motion_event_confidence(req: MotionStreamRequest) -> Optional[float]:
         top = max(detections, key=lambda d: float(d.get("confidence", 0.0)))
         return float(top.get("confidence", 0.0))
     return None
+
+
+def _observe_motion_trigger(req: MotionStreamRequest, *, capture_start_wall_ns: Optional[int] = None) -> dict[str, Optional[float]]:
+    detections = [_model_dump(d) for d in getattr(req, "detections", [])]
+    top_label = "motion"
+    top_conf: Optional[float] = None
+    if detections:
+        top = max(detections, key=lambda d: float(d.get("confidence", 0.0)))
+        top_label = str(top.get("label") or "unknown")
+        top_conf = float(top.get("confidence", 0.0))
+        motion_top_confidence.labels(req.camera_id, top_label).set(top_conf)
+    motion_triggers_total.labels(req.camera_id, top_label).inc()
+    if getattr(req, "motion_score", None) is not None:
+        motion_score_observed.labels(req.camera_id).observe(float(req.motion_score))
+    trigger_latency: Optional[float] = None
+    trigger_wall_ns = getattr(req, "trigger_wall_ns", None)
+    if trigger_wall_ns is not None and capture_start_wall_ns is not None:
+        trigger_latency = max(0.0, (int(capture_start_wall_ns) - int(trigger_wall_ns)) / 1_000_000.0)
+        trigger_to_capture_start_ms.labels(req.camera_id).observe(trigger_latency)
+    return {"top_confidence": top_conf, "trigger_to_capture_start_latency_ms": trigger_latency}
 
 
 def _motion_capture_request(req: MotionStreamRequest, *, event_label: str) -> CaptureSessionRequest:
@@ -154,7 +234,18 @@ def _tail_growing_file(path: Path, session_id: str, *, chunk_size: int = 64 * 10
 def _node2_request(method: str, camera_id: str, endpoint: str, **kwargs):
     try:
         base_url = policy.node2_url(camera_id)
-        response = httpx.request(method, f"{base_url}{endpoint}", timeout=5.0, **kwargs)
+        headers = dict(kwargs.pop("headers", {}) or {})
+        json_payload = kwargs.pop("json", None)
+        if json_payload is not None:
+            body = json.dumps(json_payload, separators=(",", ":")).encode("utf-8")
+            headers.setdefault("Content-Type", "application/json")
+            if NODE_API_SIGNING_SECRET:
+                headers.update(signed_headers(NODE_API_SIGNING_SECRET, method, endpoint, body))
+            response = httpx.request(method, f"{base_url}{endpoint}", timeout=5.0, content=body, headers=headers, **kwargs)
+        else:
+            if NODE_API_SIGNING_SECRET:
+                headers.update(signed_headers(NODE_API_SIGNING_SECRET, method, endpoint, b""))
+            response = httpx.request(method, f"{base_url}{endpoint}", timeout=5.0, headers=headers, **kwargs)
         response.raise_for_status()
         return response.json()
     except PolicyError as exc:
@@ -168,19 +259,6 @@ def _node2_request(method: str, camera_id: str, endpoint: str, **kwargs):
         raise HTTPException(status_code=502, detail=f"Node2 communication failed: {exc}") from exc
 
 
-@app.on_event("startup")
-def startup() -> None:
-    camera = policy.camera(CAMERA_ID)
-    db.upsert_camera(
-        CAMERA_ID,
-        "Node2 C922 Gate Camera",
-        "usb_rtp",
-        camera.source_ip,
-        "gate",
-        True,
-    )
-
-
 @app.get("/health")
 def health():
     api_requests.labels("health").inc()
@@ -191,6 +269,55 @@ def health():
 def cameras():
     api_requests.labels("cameras").inc()
     return db.list_cameras()
+
+
+@app.get("/cameras/runtime")
+def cameras_runtime():
+    api_requests.labels("cameras_runtime").inc()
+    return {
+        "cameras": [
+            {
+                "camera_id": cam.camera_id,
+                "source_ip": cam.source_ip,
+                "node2_url": cam.node2_url,
+                "allowed_node1_ips": list(cam.allowed_node1_ips),
+                "allowed_ports": list(cam.allowed_ports),
+                "allowed_profiles": list(cam.allowed_profiles),
+                "allowed_devices": list(cam.allowed_devices),
+            }
+            for cam in policy.cameras()
+        ],
+        "multi_camera_ready": True,
+    }
+
+
+@app.get("/security/runtime")
+def security_runtime():
+    api_requests.labels("security_runtime").inc()
+    return {
+        "node1_api": api_security.security_posture(),
+        "signed_node2_required": REQUIRE_SIGNED_NODE2,
+        "signed_node2_secret_configured": bool(NODE_API_SIGNING_SECRET),
+        "mtls_next_step": "terminate TLS/mTLS at reverse proxy or systemd socket; signed local calls are enabled in-app",
+    }
+
+
+@app.get("/models/registry")
+def models_registry():
+    api_requests.labels("models_registry").inc()
+    return {"models": model_registry.list()}
+
+
+@app.get("/models/verify")
+def models_verify():
+    api_requests.labels("models_verify").inc()
+    return model_registry.verify()
+
+
+@app.get("/inference/providers")
+def inference_providers(requested: str = "auto"):
+    api_requests.labels("inference_providers").inc()
+    return provider_report(requested)
 
 
 @app.get("/node2/status")
@@ -445,7 +572,12 @@ def motion_stream_start(req: MotionStreamRequest, request: Request):
     try:
         cap_req = _motion_capture_request(req, event_label="manual_motion_stream_start")
         session = capture_manager.start_session(cap_req, requested_source=_requester_ip(request))
+        capture_start_wall_ns = time.time_ns()
+        trigger_metrics = _observe_motion_trigger(req, capture_start_wall_ns=capture_start_wall_ns)
         event_id = f"mot_{session['session_id']}"
+        attrs = _motion_event_attrs(req, session["session_id"])
+        attrs["capture_start_wall_ns"] = capture_start_wall_ns
+        attrs.update({k: v for k, v in trigger_metrics.items() if v is not None})
         db.insert_event({
             "event_id": event_id,
             "camera_id": req.camera_id,
@@ -455,7 +587,7 @@ def motion_stream_start(req: MotionStreamRequest, request: Request):
             "severity": "info",
             "label": "motion",
             "confidence": _motion_event_confidence(req),
-            "attrs": _motion_event_attrs(req, session["session_id"]),
+            "attrs": attrs,
             "caption": f"Motion-triggered live MP4 stream started for {req.camera_id}.",
         })
         return {**session, **_stream_urls(session["session_id"]), "event_id": event_id}
@@ -481,7 +613,12 @@ def node2_motion_event(req: Node2MotionEventRequest, request: Request):
     cap_req = _motion_capture_request(req, event_label="node2_motion_detected")
     try:
         session = capture_manager.start_session(cap_req, requested_source=_requester_ip(request))
+        capture_start_wall_ns = time.time_ns()
+        trigger_metrics = _observe_motion_trigger(req, capture_start_wall_ns=capture_start_wall_ns)
         event_id = f"mot_{session['session_id']}"
+        attrs = _motion_event_attrs(req, session["session_id"])
+        attrs["capture_start_wall_ns"] = capture_start_wall_ns
+        attrs.update({k: v for k, v in trigger_metrics.items() if v is not None})
         db.insert_event({
             "event_id": event_id,
             "camera_id": req.camera_id,
@@ -491,7 +628,7 @@ def node2_motion_event(req: Node2MotionEventRequest, request: Request):
             "severity": "info",
             "label": "motion",
             "confidence": _motion_event_confidence(req),
-            "attrs": _motion_event_attrs(req, session["session_id"]),
+            "attrs": attrs,
             "caption": f"Node2 reported motion/person/object detection and Node1 started live MP4 capture for {req.camera_id}.",
         })
         return {**session, **_stream_urls(session["session_id"]), "event_id": event_id}
@@ -536,6 +673,42 @@ def motion_stream_preview_mp4(session_id: str):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="preview MP4 is not ready")
     return FileResponse(path, media_type="video/mp4", filename=f"{session_id}_preview.mp4")
+
+
+@app.get("/storage/status")
+def storage_status_endpoint():
+    api_requests.labels("storage_status").inc()
+    return storage_status(StorageRetentionPolicy.from_env(policy.media_root("dataset")))
+
+
+@app.post("/storage/prune")
+def storage_prune_endpoint(dry_run: bool = True):
+    api_requests.labels("storage_prune").inc()
+    from services.common.storage_retention import prune_storage
+    return prune_storage(StorageRetentionPolicy.from_env(policy.media_root("dataset")), dry_run=dry_run)
+
+
+@app.post("/index/build")
+def index_build(limit: int = Query(1000, ge=1, le=100000), output_path: str = "data/index/ai_camera_evidence_index.jsonl"):
+    api_requests.labels("index_build").inc()
+    return build_index(DB_PATH, output_path=output_path, limit=limit)
+
+
+@app.get("/capture/sessions/{session_id}/completeness")
+def capture_session_completeness(session_id: str):
+    api_requests.labels("capture_session_completeness").inc()
+    session = capture_manager.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="capture session not found")
+    artifacts = db.list_capture_artifacts(session_id)
+    expected = {"manifest", "frames_jsonl", "metrics_summary", "report"}
+    if session.get("status") == "completed":
+        expected.add("preview_mp4")
+    if "live_mp4" in (session.get("notes") or "") or session.get("live_mp4_ready"):
+        expected.add("live_mp4")
+    present = {a.get("artifact_type") for a in artifacts}
+    missing = sorted(expected - present)
+    return {"session_id": session_id, "complete": not missing, "expected": sorted(expected), "present": sorted(p for p in present if p), "missing": missing}
 
 
 @app.post("/query")

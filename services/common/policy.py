@@ -97,6 +97,9 @@ class SecurityPolicy:
             )
         return result
 
+    def cameras(self) -> tuple[CameraPolicy, ...]:
+        return tuple(self._cameras.values())
+
     def camera(self, camera_id: str) -> CameraPolicy:
         try:
             return self._cameras[camera_id]

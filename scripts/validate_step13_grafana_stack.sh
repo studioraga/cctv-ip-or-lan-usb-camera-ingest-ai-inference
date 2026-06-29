@@ -24,8 +24,15 @@ assert data['uid'] == 'ai-camera-capture-session-demo'
 print('Grafana dashboard JSON OK')
 PY
 if command -v docker >/dev/null 2>&1; then
-  docker compose -f docker/docker-compose.node1.yml config >/dev/null
-  log "docker compose config OK"
+  if docker compose -f docker/docker-compose.node1.yml config >/tmp/ai_camera_compose_step13.$$ 2>/tmp/ai_camera_compose_step13.err.$$; then
+    log "docker compose config OK"
+  else
+    log "docker compose config FAILED"
+    cat /tmp/ai_camera_compose_step13.err.$$ | tee -a "$OUT" >&2
+    rm -f /tmp/ai_camera_compose_step13.$$ /tmp/ai_camera_compose_step13.err.$$
+    exit 1
+  fi
+  rm -f /tmp/ai_camera_compose_step13.$$ /tmp/ai_camera_compose_step13.err.$$
 else
   log "docker not installed; skipped compose config"
 fi

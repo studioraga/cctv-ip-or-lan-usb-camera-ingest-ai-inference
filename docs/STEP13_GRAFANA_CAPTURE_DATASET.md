@@ -200,13 +200,15 @@ If Prometheus tries to mount `docker/configs/runtime/prometheus.yml`, the
 Prometheus volume path is wrong. If Grafana is healthy but the dashboard is
 missing, the Grafana provisioning/dashboard paths are wrong.
 
-Health and provisioning checks:
+Health and provisioning checks for the default hardened lab bind (`AI_CAMERA_OBSERVABILITY_BIND=127.0.0.1`):
 
 ```bash
-curl -fsS http://192.168.29.20:9090/-/healthy
-curl -fsS http://192.168.29.20:3000/api/health | python3 -m json.tool
-curl -fsS -u admin:admin 'http://192.168.29.20:3000/api/search?query=AI%20Camera' | python3 -m json.tool
+curl -fsS http://127.0.0.1:9090/-/healthy
+curl -fsS http://127.0.0.1:3000/api/health | python3 -m json.tool
+curl -fsS -u "${GRAFANA_ADMIN_USER:-admin}:${GRAFANA_ADMIN_PASSWORD:-admin}" 'http://127.0.0.1:3000/api/search?query=AI%20Camera' | python3 -m json.tool
 ```
+
+For LAN dashboard access from another machine, set `AI_CAMERA_OBSERVABILITY_BIND=0.0.0.0` or the Node1 LAN IP and set a strong `GRAFANA_ADMIN_PASSWORD` before rerunning `scripts/startup/node1_startup_step13.sh`. If Grafana was already started earlier, the existing `grafana_storage` Docker volume keeps the old admin password; the startup script resets it to `GRAFANA_ADMIN_PASSWORD` by default through `AI_CAMERA_GRAFANA_SYNC_ADMIN_PASSWORD=1`.
 
 Expected dashboard:
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,11 +20,32 @@ class EventDB:
 
     This class is the single schema authority. It applies immutable SQL migrations
     and enables foreign keys and a busy timeout on every connection.
+
+    The Node1 API starts background capture-session threads that update the same
+    EventDB object while the request thread records the motion event and returns
+    the initial HTTP response. Python's sqlite3 connection allows cross-thread use
+    when check_same_thread=False, but callers must still serialize access. Keep a
+    small re-entrant lock around public EventDB methods so the API thread and the
+    capture worker cannot interleave operations on the same connection.
     """
+
+    _LOCK_EXEMPT = {"conn", "db_path", "_lock", "_LOCK_EXEMPT", "__class__"}
+
+    def __getattribute__(self, name: str):
+        attr = object.__getattribute__(self, name)
+        if name.startswith("_") or name in object.__getattribute__(self, "_LOCK_EXEMPT") or not callable(attr):
+            return attr
+
+        def locked(*args, **kwargs):
+            with object.__getattribute__(self, "_lock"):
+                return attr(*args, **kwargs)
+
+        return locked
 
     def __init__(self, db_path: str, migrations_dir: str = "migrations"):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
         self.conn = sqlite3.connect(db_path, check_same_thread=False, timeout=5.0)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
@@ -208,6 +230,54 @@ class EventDB:
         sql = "UPDATE capture_sessions SET " + ", ".join(f"{k}=?" for k in updates) + " WHERE session_id=?"
         self.conn.execute(sql, [*updates.values(), session_id])
         self.conn.commit()
+
+
+    def mark_stale_capture_sessions(self, *, camera_id: Optional[str] = None, reason: str = "stale active capture session recovered after Node1 API startup") -> List[Dict[str, Any]]:
+        """Mark persisted pending/running sessions as failed after API restart.
+
+        Capture sessions run inside the Node1 API process. If the API process is
+        restarted, any rows left in pending/running cannot still have a live
+        worker thread in the new process. Keeping them active blocks Step 14/15
+        with 409 Conflict forever, so recover them explicitly at startup.
+        """
+        now = now_iso()
+        if camera_id:
+            rows = [
+                dict(r)
+                for r in self.conn.execute(
+                    """
+                    SELECT * FROM capture_sessions
+                    WHERE camera_id=? AND status IN ('pending','running')
+                    ORDER BY created_at DESC
+                    """,
+                    (camera_id,),
+                )
+            ]
+        else:
+            rows = [
+                dict(r)
+                for r in self.conn.execute(
+                    """
+                    SELECT * FROM capture_sessions
+                    WHERE status IN ('pending','running')
+                    ORDER BY created_at DESC
+                    """
+                )
+            ]
+        if not rows:
+            return []
+        session_ids = [r["session_id"] for r in rows]
+        placeholders = ",".join("?" for _ in session_ids)
+        self.conn.execute(
+            f"""
+            UPDATE capture_sessions
+            SET status='failed', ended_at=?, error=?, updated_at=?
+            WHERE session_id IN ({placeholders})
+            """,
+            [now, reason, now, *session_ids],
+        )
+        self.conn.commit()
+        return rows
 
     def get_capture_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         row = self.conn.execute("SELECT * FROM capture_sessions WHERE session_id=?", (session_id,)).fetchone()

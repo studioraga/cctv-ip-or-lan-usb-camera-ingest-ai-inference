@@ -33,9 +33,35 @@ echo "Output=$OUT" | tee -a "$OUT"
 section(){ echo "" | tee -a "$OUT"; echo "=== $* ===" | tee -a "$OUT"; }
 run(){ echo "+ $*" | tee -a "$OUT"; "$@" 2>&1 | tee -a "$OUT"; }
 
+run_capture_start(){
+  echo "+ curl_json -X POST $NODE1/motion/events/node2 -H Content-Type: application/json -d @$TMP_JSON -o $START_RESPONSE" | tee -a "$OUT"
+  local err_file status
+  err_file="$OUT_DIR/motion_stream_start_error.txt"
+  status=0
+  curl_json -X POST "$NODE1/motion/events/node2" -H 'Content-Type: application/json' -d @"$TMP_JSON" -o "$START_RESPONSE" 2>"$err_file" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    cat "$err_file" | tee -a "$OUT"
+    echo "[FAIL] motion event POST failed with curl status $status" | tee -a "$OUT"
+    echo "[INFO] Current stream state:" | tee -a "$OUT"
+    curl_json "$NODE1/motion/streams/current?camera_id=$CAMERA_ID" 2>&1 | tee -a "$OUT" || true
+    echo "[INFO] Recent capture sessions:" | tee -a "$OUT"
+    curl_json "$NODE1/capture/sessions?camera_id=$CAMERA_ID&limit=5" 2>&1 | tee -a "$OUT" || true
+    return "$status"
+  fi
+}
+
+curl_json(){
+  # Keep Step 14 from looking hung if an API regression blocks the initial
+  # motion-event POST. The motion endpoint should return immediately with a
+  # session_id; capture runs asynchronously in the Node1 API process.
+  curl --connect-timeout "${AI_CAMERA_CURL_CONNECT_TIMEOUT_SEC:-5}" \
+       --max-time "${AI_CAMERA_STEP14_API_MAX_TIME_SEC:-30}" \
+       -fsS "$@"
+}
+
 section "Health"
-run curl -fsS "$NODE1/health"
-run curl -fsS "$NODE2/health"
+run curl_json "$NODE1/health"
+run curl_json "$NODE2/health"
 
 section "Trigger Node2-style motion event on Node1 API"
 cat > "$TMP_JSON" <<JSON
@@ -51,7 +77,9 @@ cat > "$TMP_JSON" <<JSON
 }
 JSON
 START_RESPONSE="$OUT_DIR/motion_stream_response.json"
-run curl -fsS -X POST "$NODE1/motion/events/node2" -H 'Content-Type: application/json' -d @"$TMP_JSON" -o "$START_RESPONSE"
+section "Preflight current motion stream state"
+run curl_json "$NODE1/motion/streams/current?camera_id=$CAMERA_ID"
+run_capture_start
 cat "$START_RESPONSE" | python3 -m json.tool | tee -a "$OUT"
 
 SESSION_ID="$(python3 - <<PY
@@ -73,7 +101,7 @@ DEADLINE=$((SECONDS + DURATION + 45))
 STATUS="unknown"
 while [[ $SECONDS -lt $DEADLINE ]]; do
   DETAIL="$OUT_DIR/session_${SESSION_ID}.json"
-  curl -fsS "$NODE1/capture/sessions/$SESSION_ID" -o "$DETAIL"
+  curl_json "$NODE1/capture/sessions/$SESSION_ID" -o "$DETAIL"
   STATUS="$(python3 - <<PY
 import json
 print(json.load(open('$DETAIL'))['status'])
@@ -95,7 +123,7 @@ fi
 
 section "Verify artifacts"
 ARTIFACTS="$OUT_DIR/artifacts_${SESSION_ID}.json"
-run curl -fsS "$NODE1/capture/sessions/$SESSION_ID/artifacts" -o "$ARTIFACTS"
+run curl_json "$NODE1/capture/sessions/$SESSION_ID/artifacts" -o "$ARTIFACTS"
 cat "$ARTIFACTS" | python3 -m json.tool | tee -a "$OUT"
 python3 - <<PY | tee -a "$OUT"
 import json, sys
@@ -111,7 +139,9 @@ print('preview_mp4_size_bytes=', types['preview_mp4'].get('size_bytes'))
 PY
 
 section "Download completed live MP4 through Node1 API"
-run curl -fsS "$LIVE_URL" -o "$DL_MP4"
+run curl --connect-timeout "${AI_CAMERA_CURL_CONNECT_TIMEOUT_SEC:-5}" \
+     --max-time "${AI_CAMERA_STEP14_DOWNLOAD_MAX_TIME_SEC:-120}" \
+     -fsS "$LIVE_URL" -o "$DL_MP4" 2>&1 | tee -a "$OUT"
 ls -lh "$DL_MP4" | tee -a "$OUT"
 if [[ ! -s "$DL_MP4" ]]; then
   echo "[FAIL] downloaded live MP4 is empty" | tee -a "$OUT"

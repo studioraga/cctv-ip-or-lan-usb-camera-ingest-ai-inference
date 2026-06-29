@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import cv2
 import numpy as np
 
+from services.common.onnx_provider_validation import select_onnx_providers
+
 try:
     import onnxruntime as ort
 except ImportError:
@@ -231,8 +233,15 @@ class YoloOnnxDetector:
         self.confidence_threshold = confidence_threshold
         self.iou_threshold = iou_threshold
         self._last_meta: LetterboxMeta | None = None
-        providers = providers or ort.get_available_providers()
-        self.session = ort.InferenceSession(model_path, providers=providers)
+        selection = select_onnx_providers(providers if isinstance(providers, str) else None) if providers is None or isinstance(providers, str) else None
+        if selection is not None:
+            if not selection.ok:
+                raise RuntimeError(selection.reason)
+            providers = list(selection.providers)
+        elif providers is None:
+            providers = ort.get_available_providers()
+        self.providers = list(providers)
+        self.session = ort.InferenceSession(model_path, providers=self.providers)
         self.input_name = self.session.get_inputs()[0].name
 
     def preprocess(self, frame_bgr):

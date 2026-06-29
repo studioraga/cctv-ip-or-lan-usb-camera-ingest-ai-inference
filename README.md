@@ -570,15 +570,17 @@ The compose file is under `docker/`, so relative mounts must be:
 ./grafana/dashboards:/var/lib/grafana/dashboards:ro
 ```
 
-Health checks:
+Health checks for the default hardened lab bind (`AI_CAMERA_OBSERVABILITY_BIND=127.0.0.1`):
 
 ```bash
-curl -fsS http://192.168.29.20:9090/-/healthy
-curl -fsS http://192.168.29.20:3000/api/health | python3 -m json.tool
-curl -fsS -u admin:admin 'http://192.168.29.20:3000/api/search?query=AI%20Camera' | python3 -m json.tool
+curl -fsS http://127.0.0.1:9090/-/healthy
+curl -fsS http://127.0.0.1:3000/api/health | python3 -m json.tool
+curl -fsS -u "${GRAFANA_ADMIN_USER:-admin}:${GRAFANA_ADMIN_PASSWORD:-admin}" 'http://127.0.0.1:3000/api/search?query=AI%20Camera' | python3 -m json.tool
 ```
 
-Open:
+To expose Grafana/Prometheus to another LAN browser, set `AI_CAMERA_OBSERVABILITY_BIND=0.0.0.0` or `AI_CAMERA_OBSERVABILITY_BIND=192.168.29.20` in `deploy/ai-camera.env`, set a strong `GRAFANA_ADMIN_PASSWORD`, and rerun the Step 13 startup script. Grafana only applies `GF_SECURITY_ADMIN_PASSWORD` when its Docker volume is first initialized, so the startup script also resets the existing Grafana admin password to the value in `GRAFANA_ADMIN_PASSWORD` by default. Set `AI_CAMERA_GRAFANA_SYNC_ADMIN_PASSWORD=0` only if you manage Grafana credentials manually.
+
+Open after LAN exposure is enabled:
 
 ```text
 Grafana dashboard:
@@ -775,3 +777,33 @@ Manual one-shot real watcher run:
 ```
 
 See `docs/STEP15_NODE2_YOLO_MOTION_TRIGGER.md` for the full state machine, environment variables, validation steps, and Option A limitations.
+
+## Step 16: production-readiness baseline
+
+Step 16 addresses the post-Step-15 production gaps: Node1 API authorization/RBAC, signed Node1↔Node2 local calls, Grafana/Prometheus hardening defaults, model registry/checksum/provider metadata, ONNX Runtime provider validation, trigger-to-capture-start latency metrics, storage retention/quota controls, multi-camera policy abstraction, local evidence indexing for future RAG, and FastAPI lifespan startup.
+
+Key endpoints:
+
+```text
+GET  /security/runtime
+GET  /models/registry
+GET  /models/verify
+GET  /inference/providers?requested=auto
+GET  /cameras/runtime
+GET  /storage/status
+POST /storage/prune?dry_run=true
+POST /index/build
+GET  /capture/sessions/{session_id}/completeness
+```
+
+Validation:
+
+```bash
+./scripts/validate_step16_production_readiness.sh
+```
+
+The Step 16 test suite is deterministic even when your shell has sourced
+`deploy/ai-camera.env`; the pytest fixture clears deployment auth/signing
+variables before each test and individual tests set the values they need.
+
+Design notes: `docs/STEP16_PRODUCTION_READINESS.md`.

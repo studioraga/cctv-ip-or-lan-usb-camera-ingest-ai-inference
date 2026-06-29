@@ -122,6 +122,17 @@ The Step 13 startup script renders `configs/runtime/prometheus.yml` before
 starting Docker Compose. This is required because the Compose file bind-mounts
 that generated file into the Prometheus container.
 
+Step 16 hardening binds Prometheus, Grafana, and Qdrant to localhost by default
+with `AI_CAMERA_OBSERVABILITY_BIND=127.0.0.1`. The startup script therefore
+performs health checks through `127.0.0.1`. To open Grafana from another LAN
+machine, set `AI_CAMERA_OBSERVABILITY_BIND=0.0.0.0` or the Node1 LAN IP and set
+a strong `GRAFANA_ADMIN_PASSWORD` in `deploy/ai-camera.env`. Grafana stores
+admin credentials in the persistent `grafana_storage` Docker volume, so changing
+the env file after first startup does not update the stored password by itself.
+The startup script keeps `AI_CAMERA_GRAFANA_SYNC_ADMIN_PASSWORD=1` by default
+and resets the Grafana admin password to the env-file value before authenticated
+API dashboard checks.
+
 If `docker compose up` was run before rendering the file, Docker may have
 created `configs/runtime/prometheus.yml` as a directory. The render script
 repairs that specific stale path and writes the expected file.

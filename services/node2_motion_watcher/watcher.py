@@ -9,10 +9,12 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
+from urllib.parse import urlparse
 
 import httpx
 
 from agents.node2.node2_streamer_controller import PROFILES
+from services.common.request_signing import signed_headers
 
 LOG = logging.getLogger("node2_motion_watcher")
 
@@ -88,6 +90,11 @@ class WatcherConfig:
     node1_timeout_sec: float = 10.0
     max_session_wait_extra_sec: float = 60.0
     yolo_model: str = ""
+    yolo_model_id: str = "node2-watcher-yolo11n-coco-onnx"
+    yolo_model_sha256: str = ""
+    onnx_provider: str = "auto"
+    node1_api_key: str = ""
+    signing_secret: str = ""
     yolo_input_size: int = 640
     yolo_confidence_threshold: float = 0.45
     yolo_iou_threshold: float = 0.45
@@ -127,6 +134,11 @@ class WatcherConfig:
             required_confirmations=_env_int("AI_CAMERA_NODE2_WATCHER_REQUIRED_CONFIRMATIONS", 2),
             cooldown_sec=_env_float("AI_CAMERA_NODE2_WATCHER_COOLDOWN_SEC", 20.0),
             yolo_model=watcher_yolo_model,
+            yolo_model_id=os.getenv("AI_CAMERA_NODE2_WATCHER_YOLO_MODEL_ID", "node2-watcher-yolo11n-coco-onnx"),
+            yolo_model_sha256=os.getenv("AI_CAMERA_NODE2_WATCHER_YOLO_MODEL_SHA256", os.getenv("AI_CAMERA_YOLO_MODEL_SHA256", "")).strip(),
+            onnx_provider=os.getenv("AI_CAMERA_NODE2_WATCHER_ONNX_EXECUTION_PROVIDER", os.getenv("AI_CAMERA_ONNX_EXECUTION_PROVIDER", "auto")),
+            node1_api_key=os.getenv("AI_CAMERA_NODE2_TO_NODE1_API_KEY", os.getenv("AI_CAMERA_NODE1_API_TOKEN", "")).strip(),
+            signing_secret=os.getenv("AI_CAMERA_NODE_API_SIGNING_SECRET", "").strip(),
             yolo_input_size=_env_int("AI_CAMERA_NODE2_WATCHER_YOLO_INPUT_SIZE", 640),
             yolo_confidence_threshold=_env_float("AI_CAMERA_NODE2_WATCHER_YOLO_CONFIDENCE", 0.45),
             yolo_iou_threshold=_env_float("AI_CAMERA_NODE2_WATCHER_YOLO_IOU", 0.45),
@@ -179,6 +191,17 @@ def build_motion_event_payload(
         "trigger_frame_id": int(trigger_frame_id),
         "trigger_wall_ns": int(time.time_ns()),
         "cooldown_sec": float(cfg.cooldown_sec),
+        "model_metadata": {
+            "model_id": cfg.yolo_model_id,
+            "role": "node2_motion_watcher_confirmation",
+            "path": cfg.yolo_model,
+            "sha256": cfg.yolo_model_sha256,
+            "provider": cfg.onnx_provider,
+            "confidence_threshold": cfg.yolo_confidence_threshold,
+            "iou_threshold": cfg.yolo_iou_threshold,
+            "yolo_required": cfg.yolo_required,
+            "interesting_labels": list(cfg.interesting_labels),
+        },
     }
 
 
@@ -237,6 +260,7 @@ class YoloConfirmationDetector:
         self.detector = YoloOnnxDetector(
             str(model_path),
             input_size=cfg.yolo_input_size,
+            providers=cfg.onnx_provider,
             class_names=COCO_CLASS_NAMES,
             confidence_threshold=cfg.yolo_confidence_threshold,
             iou_threshold=cfg.yolo_iou_threshold,
@@ -325,10 +349,21 @@ class Node1MotionClient:
         self.cfg = cfg
         self.client = httpx.Client(timeout=cfg.node1_timeout_sec)
 
+    def _headers(self, method: str, path: str, body: bytes = b"") -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.cfg.node1_api_key:
+            headers["X-API-Key"] = self.cfg.node1_api_key
+        if self.cfg.signing_secret:
+            headers.update(signed_headers(self.cfg.signing_secret, method, path, body))
+        return headers
+
     def post_motion_event(self, payload: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self.cfg.node1_url}/motion/events/node2"
+        path = "/motion/events/node2"
+        url = f"{self.cfg.node1_url}{path}"
         LOG.info("Posting Node2 motion event to %s", url)
-        response = self.client.post(url, json=payload)
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        headers = {"Content-Type": "application/json", **self._headers("POST", path, body)}
+        response = self.client.post(url, content=body, headers=headers)
         if response.status_code == 409:
             LOG.warning("Node1 already has an active capture session: %s", response.text[:300])
             return {"status": "already_active", "detail": response.text[:1000]}
@@ -337,7 +372,8 @@ class Node1MotionClient:
 
     def get_session(self, status_url: str) -> dict[str, Any]:
         url = status_url if status_url.startswith("http") else f"{self.cfg.node1_url}{status_url}"
-        response = self.client.get(url)
+        path = urlparse(url).path or status_url
+        response = self.client.get(url, headers=self._headers("GET", path, b""))
         response.raise_for_status()
         return response.json()
 
@@ -464,6 +500,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     ap.add_argument("--sample-fps", type=float)
     ap.add_argument("--motion-threshold", type=float)
     ap.add_argument("--yolo-model")
+    ap.add_argument("--yolo-model-id")
+    ap.add_argument("--onnx-provider")
+    ap.add_argument("--node1-api-key")
+    ap.add_argument("--signing-secret")
     ap.add_argument("--yolo-confidence", type=float, help="YOLO detection confidence threshold")
     ap.add_argument("--yolo-iou", type=float, help="YOLO NMS IoU threshold")
     ap.add_argument("--candidate-window", type=int, help="debounce window length")
@@ -497,6 +537,10 @@ def config_from_args(args: argparse.Namespace) -> WatcherConfig:
         ("sample_fps", "sample_fps"),
         ("motion_threshold", "motion_threshold"),
         ("yolo_model", "yolo_model"),
+        ("yolo_model_id", "yolo_model_id"),
+        ("onnx_provider", "onnx_provider"),
+        ("node1_api_key", "node1_api_key"),
+        ("signing_secret", "signing_secret"),
         ("yolo_confidence_threshold", "yolo_confidence"),
         ("yolo_iou_threshold", "yolo_iou"),
         ("candidate_window", "candidate_window"),

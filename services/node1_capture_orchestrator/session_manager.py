@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover - optional during minimal imports
 
 from services.common.event_db import EventDB, now_iso
 from services.common.policy import SecurityPolicy
+from services.common.request_signing import signed_headers
 from services.common.timed_frame_protocol import TimedFrameReassembler
 from services.node1_capture_orchestrator.dataset_writer import DatasetWriter
 from services.node1_capture_orchestrator.live_mp4 import FragmentedMp4Writer
@@ -109,6 +110,19 @@ class CaptureMetrics:
                 ["path"],
                 registry=registry,
             )
+            self.live_mp4_ready_latency_ms = Histogram(
+                "ai_camera_live_mp4_ready_latency_ms",
+                "Latency from capture-session start to first live MP4 bytes",
+                ["camera_id", "profile"],
+                buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
+                registry=registry,
+            )
+            self.artifact_complete = Gauge(
+                "ai_camera_capture_session_artifact_complete",
+                "1 when required per-session artifacts are complete",
+                ["camera_id", "session_id"],
+                registry=registry,
+            )
             self.errors_total = Counter(
                 "ai_camera_capture_session_errors_total",
                 "Capture-session errors by reason",
@@ -149,6 +163,14 @@ class CaptureMetrics:
         self.sessions_total.labels(cfg.camera_id, result).inc()
         self._disk_free(cfg.dataset_root)
 
+    def observe_live_mp4_ready(self, cfg: CaptureSessionConfig, latency_ms: float) -> None:
+        if self.enabled:
+            self.live_mp4_ready_latency_ms.labels(cfg.camera_id, cfg.profile).observe(max(0.0, latency_ms))
+
+    def set_artifact_complete(self, cfg: CaptureSessionConfig, complete: bool) -> None:
+        if self.enabled:
+            self.artifact_complete.labels(cfg.camera_id, cfg.session_id).set(1 if complete else 0)
+
     def error(self, cfg: CaptureSessionConfig, reason: str) -> None:
         if self.enabled:
             self.errors_total.labels(cfg.camera_id, reason).inc()
@@ -171,6 +193,7 @@ class CaptureSessionManager:
         self.node1_ip = os.getenv("AI_CAMERA_NODE1_IP", "192.168.29.20")
         self.node2_ip = os.getenv("AI_CAMERA_NODE2_IP", "192.168.29.188")
         self.node2_api_port = int(os.getenv("AI_CAMERA_NODE2_API_PORT", "8082"))
+        self.node_api_signing_secret = os.getenv("AI_CAMERA_NODE_API_SIGNING_SECRET", "").strip()
         self.capture_udp_port = int(os.getenv("AI_CAMERA_CAPTURE_UDP_PORT", "5001"))
         self.dataset_root = os.getenv("AI_CAMERA_DATASET_ROOT", "data/datasets")
         self.max_duration_sec = int(os.getenv("AI_CAMERA_CAPTURE_MAX_DURATION_SEC", "7200"))
@@ -181,6 +204,18 @@ class CaptureSessionManager:
         self._threads: dict[str, threading.Thread] = {}
         self._active_progress: dict[str, dict[str, Any]] = {}
         self._last_progress_update_mono: dict[str, float] = {}
+        self._live_mp4_ready_reported: set[str] = set()
+        recover_stale = os.getenv("AI_CAMERA_CAPTURE_RECOVER_STALE_ON_START", "1").strip().lower() not in {"0", "false", "no", "off"}
+        if recover_stale:
+            recovered = self.db.mark_stale_capture_sessions(
+                reason="stale active capture session recovered after Node1 API startup"
+            )
+            if recovered:
+                print(
+                    f"[WARN] recovered {len(recovered)} stale active capture session(s): "
+                    + ",".join(str(row.get("session_id")) for row in recovered),
+                    flush=True,
+                )
 
     def start_session(self, request: Any, *, requested_source: Optional[str] = None) -> dict[str, Any]:
         duration_sec = int(request.duration_sec)
@@ -255,7 +290,38 @@ class CaptureSessionManager:
             self._stop_events[session_id] = stop_event
             self._threads[session_id] = thread
             thread.start()
-            return self.get_session(session_id) or {"session_id": session_id, "status": "pending"}
+        # Return a deterministic response built from the just-created session
+        # instead of immediately re-reading SQLite through get_session(). The
+        # background capture thread starts at the same time and also updates the
+        # EventDB connection. Re-reading the DB on the API thread can therefore
+        # contend with the worker before the HTTP response is sent, making Step 14
+        # look like it is hanging at the initial /motion/events/node2 POST.
+        # Subsequent GET /capture/sessions/{id} calls merge live progress.
+        return {
+            "session_id": session_id,
+            "camera_id": camera_id,
+            "requested_by": cfg.requested_by,
+            "requested_source": requested_source,
+            "profile": profile,
+            "transport": transport,
+            "device": device,
+            "node1_ip": self.node1_ip,
+            "node2_ip": self.node2_ip,
+            "udp_port": udp_port,
+            "duration_sec": duration_sec,
+            "status": "pending",
+            "dataset_path": dataset_path,
+            "manifest_path": None,
+            "started_at": None,
+            "ended_at": None,
+            "error": None,
+            "frames_written": 0,
+            "bytes_written": 0,
+            "dropped_frames": 0,
+            "frame_stride": frame_stride,
+            "max_bytes": max_bytes,
+            "notes": cfg.notes,
+        }
 
     def stop_session(self, session_id: str) -> dict[str, Any]:
         event = self._stop_events.get(session_id)
@@ -302,11 +368,18 @@ class CaptureSessionManager:
             "device": cfg.device,
             "transport": cfg.transport,
         }
-        resp = httpx.post(f"{self._node2_url()}/stream/start", json=payload, timeout=10.0)
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self.node_api_signing_secret:
+            headers.update(signed_headers(self.node_api_signing_secret, "POST", "/stream/start", body))
+        resp = httpx.post(f"{self._node2_url()}/stream/start", content=body, headers=headers, timeout=10.0)
         resp.raise_for_status()
 
     def _node2_stop(self) -> None:
-        resp = httpx.post(f"{self._node2_url()}/stream/stop", timeout=10.0)
+        headers = {}
+        if self.node_api_signing_secret:
+            headers.update(signed_headers(self.node_api_signing_secret, "POST", "/stream/stop", b""))
+        resp = httpx.post(f"{self._node2_url()}/stream/stop", headers=headers, timeout=10.0)
         resp.raise_for_status()
 
     def _record_running_progress(
@@ -343,6 +416,10 @@ class CaptureSessionManager:
             except OSError:
                 live_mp4_bytes = 0
                 live_mp4_ready = False
+
+        if live_mp4_ready and cfg.session_id not in self._live_mp4_ready_reported:
+            self.metrics.observe_live_mp4_ready(cfg, max(0.0, (now_mono - started_mono) * 1000.0))
+            self._live_mp4_ready_reported.add(cfg.session_id)
 
         progress = {
             "frames_written": writer.frames_written,
@@ -492,7 +569,9 @@ class CaptureSessionManager:
                 artifacts.append(("preview_mp4", writer.preview_path, "video/mp4"))
             if live_mp4_path is not None and live_mp4_path.is_file() and live_mp4_path.stat().st_size > 0:
                 artifacts.append(("live_mp4", live_mp4_path, "video/mp4"))
+            present_artifacts = set()
             for artifact_type, path, media_type in artifacts:
+                present_artifacts.add(artifact_type)
                 self.db.insert_capture_artifact({
                     "artifact_id": f"{cfg.session_id}_{artifact_type}",
                     "session_id": cfg.session_id,
@@ -502,10 +581,17 @@ class CaptureSessionManager:
                     "size_bytes": path.stat().st_size if path.exists() else None,
                     "sha256": _sha256_file(path) if path.exists() and path.is_file() else None,
                 })
+            expected_artifacts = {"manifest", "frames_jsonl", "metrics_summary", "report"}
+            if writer.preview_path.is_file():
+                expected_artifacts.add("preview_mp4")
+            if cfg.live_mp4 and live_mp4_path is not None:
+                expected_artifacts.add("live_mp4")
+            self.metrics.set_artifact_complete(cfg, expected_artifacts.issubset(present_artifacts))
             self.metrics.finish(cfg, status)
             with self._lock:
                 self._active_progress.pop(cfg.session_id, None)
                 self._last_progress_update_mono.pop(cfg.session_id, None)
+                self._live_mp4_ready_reported.discard(cfg.session_id)
             self._stop_events.pop(cfg.session_id, None)
             self._threads.pop(cfg.session_id, None)
 

@@ -7,14 +7,15 @@ export AI_CAMERA_REPO_ROOT="${AI_CAMERA_REPO_ROOT:-$AI_CAMERA_REPO_ROOT_DEFAULT}
 
 AI_CAMERA_ENV_FILE="${AI_CAMERA_ENV_FILE:-${AI_CAMERA_REPO_ROOT}/deploy/ai-camera.env}"
 if [[ -f "$AI_CAMERA_ENV_FILE" ]]; then
-  # Preserve any AI_CAMERA_* values already exported by the caller so command-line
+  # Preserve any deployment values already exported by the caller so command-line
   # validation can temporarily override deploy/ai-camera.env without editing it.
   # The env file still supplies defaults for variables that were not set.
   declare -A _ai_camera_caller_env=()
   while IFS= read -r _ai_camera_name; do
-    [[ "$_ai_camera_name" == AI_CAMERA_* ]] || continue
-    _ai_camera_caller_env["$_ai_camera_name"]="${!_ai_camera_name}"
-  done < <(compgen -v AI_CAMERA_)
+    case "$_ai_camera_name" in
+      AI_CAMERA_*|GRAFANA_*|GF_*) _ai_camera_caller_env["$_ai_camera_name"]="${!_ai_camera_name}" ;;
+    esac
+  done < <(printf '%s\n' $(compgen -v AI_CAMERA_) $(compgen -v GRAFANA_) $(compgen -v GF_))
 
   set -a
   # shellcheck disable=SC1090
@@ -55,6 +56,20 @@ export AI_CAMERA_MODEL_DIR="${AI_CAMERA_MODEL_DIR:-models/object_detection}"
 export AI_CAMERA_YOLO_MODEL="${AI_CAMERA_YOLO_MODEL:-${AI_CAMERA_MODEL_DIR}/yolo11n.onnx}"
 export AI_CAMERA_YOLO_MODEL_URL="${AI_CAMERA_YOLO_MODEL_URL:-https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.onnx}"
 export AI_CAMERA_YOLO_MODEL_SHA256="${AI_CAMERA_YOLO_MODEL_SHA256:-}"
+
+# Step 16 observability hardening defaults.  The Docker stack binds to
+# localhost by default for lab safety, while still using a deterministic
+# admin password unless the operator supplies a stronger value in
+# deploy/ai-camera.env or the shell environment.  Customer deployments should
+# override GRAFANA_ADMIN_PASSWORD and, only when LAN dashboard access is
+# intended, set AI_CAMERA_OBSERVABILITY_BIND to the Node1 LAN IP or 0.0.0.0.
+export AI_CAMERA_OBSERVABILITY_BIND="${AI_CAMERA_OBSERVABILITY_BIND:-127.0.0.1}"
+export AI_CAMERA_PROMETHEUS_RETENTION="${AI_CAMERA_PROMETHEUS_RETENTION:-15d}"
+export GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
+export GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-admin}"
+export AI_CAMERA_GRAFANA_SYNC_ADMIN_PASSWORD="${AI_CAMERA_GRAFANA_SYNC_ADMIN_PASSWORD:-1}"
+export GF_AUTH_ANONYMOUS_ENABLED="${GF_AUTH_ANONYMOUS_ENABLED:-false}"
+export GF_SECURITY_ALLOW_EMBEDDING="${GF_SECURITY_ALLOW_EMBEDDING:-false}"
 
 export AI_CAMERA_NODE2_WATCHER_SAMPLE_FPS="${AI_CAMERA_NODE2_WATCHER_SAMPLE_FPS:-5}"
 export AI_CAMERA_NODE2_WATCHER_MOTION_THRESHOLD="${AI_CAMERA_NODE2_WATCHER_MOTION_THRESHOLD:-12}"
